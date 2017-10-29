@@ -1,6 +1,7 @@
 import itertools
 import gzip
 import numpy as np
+import random
 import os
 import struct
 import sys
@@ -31,18 +32,11 @@ def find_sgf_files(*dataset_dirs):
 
 
 
-def split_test_training(positions_w_context, est_num_positions):
-    print("Estimated number of chunks: %s" % (est_num_positions // CHUNK_SIZE), file=sys.stderr)
-    desired_test_size = 10**5
-    if est_num_positions < 2 * desired_test_size:
-        positions_w_context = list(positions_w_context)
-        test_size = len(positions_w_context) // 3
-        return positions_w_context[:test_size], [positions_w_context[test_size:]]
-    else:
-        shuffled_positions = utils.shuffler(positions_w_context)
-        test_chunk = utils.take_n(desired_test_size, shuffled_positions)
-        training_chunks = utils.iter_chunks(CHUNK_SIZE, shuffled_positions)
-        return test_chunk, training_chunks
+def split_test_training(positions_w_context):
+    #shuffled_positions = utils.shuffler(positions_w_context, 5000)
+    test_chunk = utils.take_n(10, positions_w_context)
+    training_chunks = utils.iter_chunks(CHUNK_SIZE, positions_w_context)
+    return test_chunk, training_chunks
 
 
 class DataSet(object):
@@ -75,10 +69,10 @@ class DataSet(object):
 
     @staticmethod
     def from_positions_w_context(positions_w_context, is_test=False):
-        positions, next_moves, results = zip(*positions_w_context)
+        positions = zip(*positions_w_context)
         extracted_features = bulk_extract_features(positions)
-        encoded_moves = make_onehot(next_moves)
-        return DataSet(extracted_features, encoded_moves, results, is_test=is_test)
+        #encoded_moves = make_onehot(next_moves)
+        return DataSet(extracted_features, None, None, is_test=is_test)
 
     def write(self, filename):
         header_bytes = struct.pack(CHUNK_HEADER_FORMAT, self.data_size, self.board_size, self.input_planes, self.is_test)
@@ -138,16 +132,16 @@ def loadccFile(file):
 
 
 def get_positions_from_sgf(file):
+    ret = []
     with open(file) as f:
         for position_w_context in loadccFile(f):
-            if position_w_context.is_usable():
-                yield position_w_context
+            yield position_w_context
 
 def parse_data_sets(*data_sets):
     sgf_files = list(find_sgf_files(*data_sets))
     print("%s sgfs found." % len(sgf_files), file=sys.stderr)
-    est_num_positions = len(sgf_files) * 200 # about 200 moves per game
     positions_w_context = itertools.chain(*map(get_positions_from_sgf, sgf_files))
 
-    test_chunk, training_chunks = split_test_training(positions_w_context, est_num_positions)
+    test_chunk, training_chunks = split_test_training(positions_w_context)
+
     return test_chunk, training_chunks
