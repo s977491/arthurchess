@@ -30,6 +30,7 @@ import tensorflow as tf
 
 import features
 import cc
+import utils
 
 EPSILON = 1e-35
 
@@ -53,8 +54,8 @@ class PolicyNetwork(object):
         # a global_step variable allows epoch counts to persist through multiple training sessions
         global_step = tf.Variable(0, name="global_step", trainable=False)
         RL_global_step = tf.Variable(0, name="RL_global_step", trainable=False)
-        x = tf.placeholder(tf.float32, [None, go.N, go.N, self.num_input_planes])
-        y = tf.placeholder(tf.float32, shape=[None, go.N ** 2])
+        x = tf.placeholder(tf.float32, [None, cc.Ny, cc.Nx, self.num_input_planes])
+        y = tf.placeholder(tf.float32, shape=[None, cc.Ny * cc.Nx * cc.Ny * cc.Nx])
         # whether this example should be positively or negatively reinforced.
         # Set to 1 for positive, -1 for negative.
         reinforce_direction = tf.placeholder(tf.float32, shape=[])
@@ -93,12 +94,12 @@ class PolicyNetwork(object):
                 h_conv_intermediate.append(_output_conv)
                 _current_h_conv = _output_conv
 
-        W_conv_final = _weight_variable([1, 1, self.k, 1], name="W_conv_final")
-        b_conv_final = tf.Variable(tf.constant(0, shape=[go.N ** 2], dtype=tf.float32), name="b_conv_final")
+        W_conv_final = _weight_variable([1, 1, self.k, cc.Nx * cc.Ny], name="W_conv_final")
+        b_conv_final = tf.Variable(tf.constant(0, shape=[cc.Nx * cc.Ny * cc.Nx * cc.Ny ], dtype=tf.float32), name="b_conv_final")
         h_conv_final = _conv2d(h_conv_intermediate[-1], W_conv_final)
 
-        output = tf.nn.softmax(tf.reshape(h_conv_final, [-1, go.N ** 2]) + b_conv_final)
-        logits = tf.reshape(h_conv_final, [-1, go.N ** 2]) + b_conv_final
+        output = tf.nn.softmax(tf.reshape(h_conv_final, [-1, cc.Nx * cc.Ny * cc.Nx * cc.Ny]) + b_conv_final)
+        logits = tf.reshape(h_conv_final, [-1, cc.Nx * cc.Ny * cc.Nx * cc.Ny]) + b_conv_final
 
         log_likelihood_cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=y))
 
@@ -106,6 +107,7 @@ class PolicyNetwork(object):
         # train_step = tf.train.AdamOptimizer(1e-4).minimize(log_likelihood_cost, global_step=global_step)
         learning_rate = tf.train.exponential_decay(1e-2, global_step, 4 * 10 ** 6, 0.5)
         train_step = tf.train.GradientDescentOptimizer(learning_rate).minimize(log_likelihood_cost, global_step=global_step)
+
         was_correct = tf.equal(tf.argmax(logits, 1), tf.argmax(y, 1))
         accuracy = tf.reduce_mean(tf.cast(was_correct, tf.float32))
 
@@ -197,12 +199,12 @@ class PolicyNetwork(object):
         'Return a sorted list of (probability, move) tuples'
         processed_position = features.extract_features(position)
         probabilities = self.session.run(self.output, feed_dict={self.x: processed_position[None, :]})[0]
-        return probabilities.reshape([go.N, go.N])
+        return probabilities.reshape([cc.Ny, cc.Nx, cc.Ny, cc.Nx])
 
     def run_many(self, positions):
         processed_positions = features.bulk_extract_features(positions)
         probabilities = self.session.run(self.output, feed_dict={self.x:processed_positions})
-        return probabilities.reshape([-1, go.N, go.N])
+        return probabilities.reshape([-1, cc.Ny, cc.Nx])
 
     def check_accuracy(self, test_data, batch_size=128):
         num_minibatches = test_data.data_size // batch_size

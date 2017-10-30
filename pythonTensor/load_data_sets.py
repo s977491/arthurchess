@@ -12,7 +12,7 @@ import cc
 
 # Number of data points to store in a chunk on disk
 CHUNK_SIZE = 4096
-CHUNK_HEADER_FORMAT = "iii?"
+CHUNK_HEADER_FORMAT = "iiii?"
 CHUNK_HEADER_SIZE = struct.calcsize(CHUNK_HEADER_FORMAT)
 
 def make_onehot(coords):
@@ -34,7 +34,7 @@ def find_sgf_files(*dataset_dirs):
 
 def split_test_training(positions_w_context):
     #shuffled_positions = utils.shuffler(positions_w_context, 5000)
-    test_chunk = utils.take_n(10, positions_w_context)
+    test_chunk = utils.take_n(100, positions_w_context)
     training_chunks = utils.iter_chunks(CHUNK_SIZE, positions_w_context)
     return test_chunk, training_chunks
 
@@ -47,7 +47,8 @@ class DataSet(object):
         self.is_test = is_test
         assert pos_features.shape[0] == next_moves.shape[0], "Didn't pass in same number of pos_features and next_moves."
         self.data_size = pos_features.shape[0]
-        self.board_size = pos_features.shape[1]
+        self.board_sizeY = pos_features.shape[1]
+        self.board_sizeX = pos_features.shape[2]
         self.input_planes = pos_features.shape[-1]
         self._index_within_epoch = 0
 
@@ -69,13 +70,13 @@ class DataSet(object):
 
     @staticmethod
     def from_positions_w_context(positions_w_context, is_test=False):
-        positions = zip(*positions_w_context)
-        extracted_features = bulk_extract_features(positions)
+        #positions = zip(positions_w_context)
+        extracted_features, encoded_moves, results= bulk_extract_features(positions_w_context)
         #encoded_moves = make_onehot(next_moves)
-        return DataSet(extracted_features, None, None, is_test=is_test)
+        return DataSet(extracted_features, encoded_moves, results, is_test=is_test)
 
     def write(self, filename):
-        header_bytes = struct.pack(CHUNK_HEADER_FORMAT, self.data_size, self.board_size, self.input_planes, self.is_test)
+        header_bytes = struct.pack(CHUNK_HEADER_FORMAT, self.data_size, self.board_sizeY, self.board_sizeX, self.input_planes, self.is_test)
         position_bytes = np.packbits(self.pos_features).tostring()
         next_move_bytes = np.packbits(self.next_moves).tostring()
         with gzip.open(filename, "wb", compresslevel=6) as f:
@@ -87,10 +88,10 @@ class DataSet(object):
     def read(filename):
         with gzip.open(filename, "rb") as f:
             header_bytes = f.read(CHUNK_HEADER_SIZE)
-            data_size, board_size, input_planes, is_test = struct.unpack(CHUNK_HEADER_FORMAT, header_bytes)
+            data_size, board_sizeY, board_sizeX, input_planes, is_test = struct.unpack(CHUNK_HEADER_FORMAT, header_bytes)
 
-            position_dims = data_size * board_size * board_size * input_planes
-            next_move_dims = data_size * board_size * board_size
+            position_dims = data_size * board_sizeY * board_sizeX * input_planes
+            next_move_dims = data_size * board_sizeY * board_sizeX
 
             # the +7 // 8 compensates for numpy's bitpacking padding
             packed_position_bytes = f.read((position_dims + 7) // 8)
@@ -101,14 +102,15 @@ class DataSet(object):
             flat_position = np.unpackbits(np.fromstring(packed_position_bytes, dtype=np.uint8))[:position_dims]
             flat_nextmoves = np.unpackbits(np.fromstring(packed_next_move_bytes, dtype=np.uint8))[:next_move_dims]
 
-            pos_features = flat_position.reshape(data_size, board_size, board_size, input_planes)
-            next_moves = flat_nextmoves.reshape(data_size, board_size * board_size)
+            pos_features = flat_position.reshape(data_size, board_sizeY, board_sizeX, input_planes)
+            next_moves = flat_nextmoves.reshape(data_size, board_sizeY * board_sizeX)
 
         return DataSet(pos_features, next_moves, [], is_test=is_test)
 
 def loadccFile(file):
     lines = file.readlines()
-    Matrix = [[0 for x in range(cc.Nx)] for y in range(cc.Ny)]
+    #Matrix = [[0 for x in range(cc.Nx)] for y in range(cc.Ny)]
+    Matrix = np.zeros([cc.Ny, cc.Nx], dtype=np.int8)
     while (lines):
 
         lastMove = [int(x) for x in lines[0].split()]
@@ -118,7 +120,7 @@ def loadccFile(file):
             chessLine = lines[3+ lineIndex]
             pieceList = list(chessLine)
             for index in range(0, cc.Nx):
-                Matrix[y][index] = pieceList[index]
+                Matrix[y,index] = ord(pieceList[index])
 
         nmFrom = None
         nmTo = None
@@ -128,7 +130,7 @@ def loadccFile(file):
         pos = cc.Position(Matrix, (nextMove[1], nextMove[0]), (nextMove[3], nextMove[2]), winStep[0], winStep[1], nmFrom, nmTo)
         lines = lines[13:]
         yield pos
-
+        Matrix = np.zeros([cc.Ny, cc.Nx], dtype=np.int8)
 
 
 def get_positions_from_sgf(file):

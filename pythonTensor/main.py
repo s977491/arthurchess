@@ -6,6 +6,7 @@ import random
 import re
 import sys
 import time
+import cc
 
 #from gtp_wrapper import make_gtp_instance
 from load_data_sets import DataSet, parse_data_sets
@@ -40,6 +41,50 @@ def timer(message):
 #             engine_reply = engine.send(cmd)
 #             sys.stdout.write(engine_reply)
 #             sys.stdout.flush()
+def sorted_moves(probability_array):
+    coords = [(a, b,c,d) for a in range(cc.Ny) for b in range(cc.Nx) for c in range(cc.Ny) for d in range(cc.Nx)]
+    coords.sort(key=lambda c: probability_array[c], reverse=True)
+    return coords
+
+def select_most_likely(position, move_probabilities, n=1):
+    ret = []
+    for move in sorted_moves(move_probabilities):
+        if position.is_move_reasonable(move):
+            ret.append(move)
+            if len(ret) == n:
+                return ret
+    return None
+
+def play(read_file):
+    print("loading...")
+    #n = PolicyNetwork(use_cpu=True)
+    #n.initialize_variables(read_file)
+
+    position = cc.get_start_board()
+    cmd = ""
+    while cmd != "q":
+        print(" 0=1=2=3=4=5=6=7=8=9===========")
+        position.printBoard();
+        #ask computer first
+        # prob = n.run(position)
+        # moves = select_most_likely(position, prob, 3)
+        # for m in moves:
+        #     print ("computer suggest move %s" % m)
+
+        cmd = input("enter:  YFrom XFrom YTo XTo, 0 to quit 1 to new")
+        cmdKey = list(map(int, cmd.split()))
+        if len(cmdKey) == 4:
+            if position.is_move_reasonable(cmdKey):
+                print(" moving %s" % cmdKey)
+                position.move((cmdKey[0], cmdKey[1]), (cmdKey[2], cmdKey[3]))
+                position.printBoard()
+                position.flip()
+
+            else:
+                print ("bad move %s" % cmdKey)
+        elif cmd == "1":
+            position = cc.get_start_board()
+
 
 def preprocess(*data_sets, processed_dir="processed_data"):
     processed_dir = os.path.join(os.getcwd(), processed_dir)
@@ -56,7 +101,7 @@ def preprocess(*data_sets, processed_dir="processed_data"):
 
     training_datasets = map(DataSet.from_positions_w_context, training_chunks)
     for i, train_dataset in enumerate(training_datasets):
-        if i % 10 == 0:
+        if i % 2 == 0:
             print("Writing training chunk %s" % i)
         train_filename = os.path.join(processed_dir, "train%s.chunk.gz" % i)
         train_dataset.write(train_filename)
@@ -64,7 +109,7 @@ def preprocess(*data_sets, processed_dir="processed_data"):
 
 def train(processed_dir, save_file=None, epochs=10, logdir=None, checkpoint_freq=10000):
     test_dataset = DataSet.read(os.path.join(processed_dir, "test.chunk.gz"))
-    train_chunk_files = [os.path.join(processed_dir, fname) 
+    train_chunk_files = [os.path.join(processed_dir, fname)
         for fname in os.listdir(processed_dir)
         if TRAINING_CHUNK_RE.match(fname)]
     save_file = os.path.join(os.getcwd(), save_file)
@@ -93,7 +138,7 @@ def train(processed_dir, save_file=None, epochs=10, logdir=None, checkpoint_freq
 
 
 parser = argparse.ArgumentParser()
-argh.add_commands(parser, [ preprocess, train])
+argh.add_commands(parser, [ preprocess, train, play])
 
 if __name__ == '__main__':
     argh.dispatch(parser)
