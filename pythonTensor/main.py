@@ -53,12 +53,12 @@ def select_most_likely(position, move_probabilities, n=1):
             ret.append(move)
             if len(ret) == n:
                 return ret
-    return None
+    return ret
 
 def play(read_file):
     print("loading...")
-    #n = PolicyNetwork(use_cpu=True)
-    #n.initialize_variables(read_file)
+    n = PolicyNetwork(use_cpu=True)
+    n.initialize_variables(read_file)
 
     position = cc.get_start_board()
     cmd = ""
@@ -66,10 +66,10 @@ def play(read_file):
         print(" 0=1=2=3=4=5=6=7=8=9===========")
         position.printBoard();
         #ask computer first
-        # prob = n.run(position)
-        # moves = select_most_likely(position, prob, 3)
-        # for m in moves:
-        #     print ("computer suggest move %s" % m)
+        prob = n.run(position)
+        moves = select_most_likely(position, prob, 3)
+        for m in moves:
+            print ("computer suggest move %s" % m)
 
         cmd = input("enter:  YFrom XFrom YTo XTo, 0 to quit 1 to new")
         cmdKey = list(map(int, cmd.split()))
@@ -109,7 +109,7 @@ def preprocess(*data_sets, processed_dir="processed_data"):
 
 def train(processed_dir, save_file=None, epochs=10, logdir=None, checkpoint_freq=10000):
     test_dataset = DataSet.read(os.path.join(processed_dir, "test.chunk.gz"))
-    train_chunk_files = [os.path.join(processed_dir, fname)
+    train_chunk_files = [os.path.join(processed_dir, fname) 
         for fname in os.listdir(processed_dir)
         if TRAINING_CHUNK_RE.match(fname)]
     save_file = os.path.join(os.getcwd(), save_file)

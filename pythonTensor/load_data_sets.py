@@ -91,7 +91,7 @@ class DataSet(object):
             data_size, board_sizeY, board_sizeX, input_planes, is_test = struct.unpack(CHUNK_HEADER_FORMAT, header_bytes)
 
             position_dims = data_size * board_sizeY * board_sizeX * input_planes
-            next_move_dims = data_size * board_sizeY * board_sizeX
+            next_move_dims = data_size * board_sizeY * board_sizeX* board_sizeY * board_sizeX
 
             # the +7 // 8 compensates for numpy's bitpacking padding
             packed_position_bytes = f.read((position_dims + 7) // 8)
@@ -103,7 +103,7 @@ class DataSet(object):
             flat_nextmoves = np.unpackbits(np.fromstring(packed_next_move_bytes, dtype=np.uint8))[:next_move_dims]
 
             pos_features = flat_position.reshape(data_size, board_sizeY, board_sizeX, input_planes)
-            next_moves = flat_nextmoves.reshape(data_size, board_sizeY * board_sizeX)
+            next_moves = flat_nextmoves.reshape(data_size, board_sizeY * board_sizeX * board_sizeY * board_sizeX)
 
         return DataSet(pos_features, next_moves, [], is_test=is_test)
 
