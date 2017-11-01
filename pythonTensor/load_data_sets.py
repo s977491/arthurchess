@@ -34,7 +34,7 @@ def find_sgf_files(*dataset_dirs):
 
 def split_test_training(positions_w_context):
     #shuffled_positions = utils.shuffler(positions_w_context, 5000)
-    test_chunk = utils.take_n(100, positions_w_context)
+    test_chunk = utils.take_n(10000, positions_w_context)
     training_chunks = utils.iter_chunks(CHUNK_SIZE, positions_w_context)
     return test_chunk, training_chunks
 

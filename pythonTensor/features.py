@@ -81,10 +81,133 @@ def winner_feature(position):
     else:
         return np.concatenate([zeros, ones], axis=2)
 
+def valid(y,x):
+    if y <0 or x <0 or y >=cc.Ny or x >=cc.Nx:
+        return False;
+    return True;
+def fillPowerCover(board, loc, feature, plane):
+    if len(loc) == 0:
+        return
 
-@planes(7)
+    piece = board[loc[0]]
+    if piece >= ord('A') and  piece <= ord('Z'):
+        piece = piece +ord('a') - ord('A')
+    pieceWSide = board[loc[0]]
+    for y,x in loc:
+        if piece == ord('k') :
+            posslist = [(y+1, x), (y-1, x), (y, x+1), (y, x-1)]
+            for i,j in posslist:
+                if valid(i, j) and (i <=2 or i >=7) and (j >=3 and j <=5):
+                    feature[i,j, plane] = 1
+        elif piece == ord('a') :
+            posslist = [(y + 1, x+1), (y - 1, x-1), (y-1, x + 1), (y+1, x - 1)]
+            for i, j in posslist:
+                if valid(i,j) and (i <= 2 or i >= 7) and (j >= 3 and j <= 5):
+                    feature[i, j, plane] = 1
+        elif piece == ord('e'):
+            posslist = [(y + 2, x + 2), (y - 2, x - 2), (y - 2, x + 2), (y + 2, x - 2)]
+            for i, j in posslist:
+                if valid(i, j) and \
+                        ((y <= 4 and pieceWSide == piece) or (y > 4 and pieceWSide != piece)):
+                    if board[(i+y) //2, (j+x)//2] == ord(' '):
+                        feature[i, j, plane] = 1
+        elif piece == ord('h'):
+            posslist = [(y + 2, x + 1), (y + 2, x - 1), (y +1, x + 2), (y + 1, x - 2), (y - 2, x + 1), (y - 2, x - 1), (y -1, x + 2), (y - 1, x - 2)]
+            for i, j in posslist:
+                if valid(i, j):
+                    if abs(i-y) ==2 and board[(i - y) // 2 +y, x] == ord(' '):
+                        feature[i, j, plane] = 1
+                    if abs(j-x) ==2 and board[y, (j - x) // 2 + x] == ord(' '):
+                        feature[i, j, plane] = 1
+        elif piece == ord('r'):
+            for i in range(y-1, -1, -1):
+                feature[i, x, plane] = 1
+                if board[i, x] != ord(' '):
+                    break;
+            for i in range(y+1, cc.Ny):
+                feature[i, x, plane] = 1
+                if board[i, x] != ord(' '):
+                    break;
+            for i in range(x-1, -1, -1):
+                feature[y, i, plane] = 1
+                if board[y, i] != ord(' '):
+                    break;
+            for i in range(x+1, cc.Nx):
+                feature[y, i, plane] = 1
+                if board[y, i] != ord(' '):
+                    break;
+        elif piece == ord('c'):
+            for i in range(y-1, -1, -1):
+                if board[i, x] == ord(' '):
+                    feature[i, x, plane] = 1
+                else:
+                    for j in range(i - 1, -1, -1):
+                        if board[j, x] != ord(' '):
+                            feature[j, x, plane] = 1
+                            break;
+                    break;
+            for i in range(y+1, cc.Ny):
+                if board[i, x] == ord(' '):
+                    feature[i, x, plane] = 1
+                else:
+                    for j in range(i + 1, cc.Ny):
+                        if board[j, x] != ord(' '):
+                            feature[j, x, plane] = 1
+                            break;
+                    break;
+            for i in range(x-1, -1, -1):
+                if board[y, i] == ord(' '):
+                    feature[y, i, plane] = 1
+                else:
+                    for j in range(i - 1, -1, -1):
+                        if board[y, j] != ord(' '):
+                            feature[y, j, plane] = 1
+                            break;
+                    break;
+            for i in range(x+1, cc.Nx):
+                if board[y, i] == ord(' '):
+                    feature[y, i, plane] = 1
+                else:
+                    for j in range(i + 1, cc.Nx):
+                        if board[y, j] != ord(' '):
+                            feature[y, j, plane] = 1
+                            break;
+                    break;
+        elif piece == ord('p') :
+            if y <= 4 and pieceWSide == piece:
+                feature[y + 1, x, plane] = 1
+            elif y > 4 and pieceWSide != piece:
+                feature[y - 1, x, plane] = 1
+            else:
+                if x != cc.Nx - 1:
+                    feature[y, x + 1, plane] = 1
+                if x != 0:
+                    feature[y, x - 1, plane] = 1
+                if y <= 4 and y != 0 :
+                    feature[y - 1, x, plane] = 1
+                elif y > 4 and y != cc.Ny -1 :
+                    feature[y + 1, x, plane] = 1
+        # elif piece == ord('e'):
+        #     posslist = [(y + 2, x + 2), (y - 2, x - 2), (y - 2, x + 2), (y + 2, x - 2)]
+        #     for i, j in posslist:
+        #         if i >
+        #         if pieceWSide == piece:
+        #             if (i <= 2 or i >= 7) and (j >= 3 and j <= 5):
+        #                 featurePlane[i, j] = 1
+
+
+def fillPlanes4Piece(piece, board, features, plane):
+    tgtMatrix = board == piece
+    y, x = np.where(tgtMatrix)
+    features[tgtMatrix, plane] = 1
+    plane += 1
+    fillPowerCover(board, list(zip(y, x)), features, plane)
+    plane += 1
+    return plane
+
+@planes(28)
 def piece_type_feature(position):
-    features = np.zeros([cc.Ny, cc.Nx, 7], dtype=np.uint8)
+    features = np.zeros([cc.Ny, cc.Nx, 28], dtype=np.uint8)
     kingPiece = ord('k')
     ridePiece = ord('r')
     horsePiece = ord('h')
@@ -100,13 +223,22 @@ def piece_type_feature(position):
     elePiece2 = ord('E')
     pawnPiece2 = ord('P')
 
-    features[np.logical_or(position.board == kingPiece, position.board == kingPiece2), 0] = 1
-    features[np.logical_or(position.board == ridePiece, position.board == ridePiece2), 1] = 1
-    features[np.logical_or(position.board == horsePiece, position.board == horsePiece2), 2] = 1
-    features[np.logical_or(position.board == canonPiece, position.board == canonPiece2), 3] = 1
-    features[np.logical_or(position.board == advisorPiece, position.board == advisorPiece2), 4] = 1
-    features[np.logical_or(position.board == elePiece, position.board == elePiece2), 5] = 1
-    features[np.logical_or(position.board == pawnPiece, position.board == pawnPiece2), 6] = 1
+    p = 0
+    p = fillPlanes4Piece(kingPiece, position.board, features, p)
+    p = fillPlanes4Piece(kingPiece2, position.board, features, p)
+    p = fillPlanes4Piece(ridePiece, position.board, features, p)
+    p = fillPlanes4Piece(ridePiece2, position.board, features, p)
+    p = fillPlanes4Piece(horsePiece, position.board, features, p)
+    p = fillPlanes4Piece(horsePiece2, position.board, features, p)
+    p = fillPlanes4Piece(canonPiece, position.board, features, p)
+    p = fillPlanes4Piece(canonPiece2, position.board, features, p)
+    p = fillPlanes4Piece(advisorPiece, position.board, features, p)
+    p = fillPlanes4Piece(advisorPiece2, position.board, features, p)
+    p = fillPlanes4Piece(elePiece, position.board, features, p)
+    p = fillPlanes4Piece(elePiece2, position.board, features, p)
+    p = fillPlanes4Piece(pawnPiece, position.board, features, p)
+    p = fillPlanes4Piece(pawnPiece2, position.board, features, p)
+    assert p == 28
 
     return features
 

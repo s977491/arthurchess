@@ -69,7 +69,7 @@ def play(read_file):
         prob = n.run(position)
         moves = select_most_likely(position, prob, 3)
         for m in moves:
-            print ("computer suggest move %s" % m)
+            print ("computer suggest move %s" % [m])
 
         cmd = input("enter:  YFrom XFrom YTo XTo, 0 to quit 1 to new")
         cmdKey = list(map(int, cmd.split()))
