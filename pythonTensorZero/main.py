@@ -50,19 +50,19 @@ def sorted_moves(probability_array):
     coords.sort(key=lambda c: probability_array[c], reverse=True)
     return coords
 
-def trainBatch(poses, epochs, n, save = False):
+def trainBatch(poses, epochs, n, reinforce=1, save = False, punish=False):
     training_datasets = DataSet.from_positions_w_context(poses)
 
     for i in range(epochs):
         with timer("training"):
-            n.trainOne(training_datasets)
+            n.trainOne(training_datasets, reinforce, punish)
         if save:
             n.save_variables()
         print ("trained")
 
 def getBestMoveWithScore(position, network, side, lessonSet):
     forbiddenMove = []
-    for lesson in lessonSet[-30:]:
+    for lesson in lessonSet[-500:]:
         if np.array_equal(lesson.board, position.board):
             forbiddenMove.append((lesson.moveFrom, lesson.moveTo))
     if side == 1:
@@ -151,7 +151,7 @@ def selfplay(read_file):
         side = 0
         lesson = ([],[])
         gameEnd = False
-        for step in range(1000): # 1000 step must stop game
+        for step in range(2000): # 1000 step must stop game
             #position.printBoard();
             moves = position.getWinMove()
             if len(moves) > 0:
@@ -177,9 +177,12 @@ def selfplay(read_file):
                 side = 1 - side
             else:
                 print("step %d done game, winning for side %d" % (step, side))
+                position.printBoard();
                 #take lesson
-                trainBatch(lesson[side], 1, n, True )
-
+                trainBatch(lesson[side][-15:], 1, n, 1, False)
+                trainBatch(lesson[side], 1, n, 1, False )
+                trainBatch(lesson[1-side], 1, n, -0.5, True )
+                trainBatch(lesson[1 - side][-1:], 1, n, 1, True, True)
                 #try again see if will fail
                 # position = lesson[1-side][-1]
                 # moves = select_most_likely(position, n, 1-side)

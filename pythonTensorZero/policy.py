@@ -35,7 +35,7 @@ import numpy as np
 EPSILON = 1e-35
 
 class PolicyNetwork(object):
-    def __init__(self, k=128, num_int_conv_layers=9, use_cpu=False):
+    def __init__(self, k=128, num_int_conv_layers=15, use_cpu=False):
         self.num_input_planes = sum(f.planes for f in features.DEFAULT_FEATURES)
         self.k = k
         self.num_int_conv_layers = num_int_conv_layers
@@ -214,17 +214,20 @@ class PolicyNetwork(object):
         print("Saving checkpoint to %s" % self.save_file, file=sys.stderr)
         self.saver.save(self.session, self.save_file)
 
-    def trainOne(self, training_data):
+    def trainOne(self, training_data, reinforce=1, punish=False):
         batch_x, batch_yFrom, batch_yTo = training_data.get_batch(training_data.data_size)
         yV = np.zeros([batch_yFrom.shape[0], 2], dtype=np.uint8)
-        yV[:, 1] = 1
+        if punish:
+            yV[:, 0] = 1
+        else:
+            yV[:, 1] = 1
         _, accuracy, cost = self.session.run(
             [self.train_step, self.accuracy, self.log_likelihood_cost],
             feed_dict={self.x: batch_x,
                        self.yV: yV,
                        self.yFrom: batch_yFrom.reshape(-1, 90),
                        self.yTo: batch_yTo.reshape(-1, 90),
-                       self.reinforce_direction: 1})
+                       self.reinforce_direction: reinforce})
 
     def train(self, training_data, batch_size=32):
         num_minibatches = training_data.data_size // batch_size
