@@ -14,3 +14,4 @@ all:	clean	$(TARGET)
 
 clean:
 	rm -f $(OBJS) $(TARGET)
+；

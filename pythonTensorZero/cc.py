@@ -242,12 +242,12 @@ class Position():
                             toY = y + i
                             toX = x + i
                             m = (y, x, toY, toX)
-                            if self.validMov(m) and toY <= 4:
+                            if self.validMov(m) and toY <= 4 and self.board[y+i//2, x+i//2] == ord(' '):
                                 ret.append(m)
                             toY = y + i
                             toX = x - i
                             m = (y, x, toY, toX)
-                            if self.validMov(m) and toY <= 4:
+                            if self.validMov(m) and toY <= 4 and self.board[y+i//2, x+i//2] == ord(' '):
                                 ret.append(m)
                     elif src == ord('p'):
                         toY = y + 1
