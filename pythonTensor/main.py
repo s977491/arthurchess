@@ -47,12 +47,13 @@ def sorted_moves(probability_array):
     return coords
 
 def select_most_likely(position, move_probabilities, n=1):
-    ret = []
-    for move in sorted_moves(move_probabilities):
-        if position.is_move_reasonable(move):
-            ret.append(move)
-            if len(ret) == n:
-                return ret
+    ret = position.getWinMove()
+    if not(move_probabilities is None) and len(ret) == 0:
+        for move in sorted_moves(move_probabilities):
+            if position.is_move_reasonable(move):
+                ret.append(move)
+                if len(ret) == n:
+                    return ret
     return ret
 
 def play(read_file):
@@ -65,6 +66,7 @@ def play(read_file):
     while cmd != "q":
         print(" 0=1=2=3=4=5=6=7=8=9===========")
         position.printBoard();
+        prob = None
         #ask computer first
         prob = n.run(position)
         moves = select_most_likely(position, prob, 3)

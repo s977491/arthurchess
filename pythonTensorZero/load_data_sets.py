@@ -1,0 +1,160 @@
+import itertools
+import gzip
+import numpy as np
+import random
+import os
+import struct
+import sys
+import utils as u
+from features import bulk_extract_features
+import utils
+import cc
+
+# Number of data points to store in a chunk on disk
+CHUNK_SIZE = 4096
+CHUNK_HEADER_FORMAT = "iiii?"
+CHUNK_HEADER_SIZE = struct.calcsize(CHUNK_HEADER_FORMAT)
+
+def make_onehot(coords):
+    num_positions = len(coords)
+    output = np.zeros([num_positions, u.Ny * u.Nx], dtype=np.uint8)
+    for i, coord in enumerate(coords):
+        output[i, utils.flatten_coords(coord)] = 1
+    return output
+
+def find_sgf_files(*dataset_dirs):
+    for dataset_dir in dataset_dirs:
+        full_dir = os.path.join(os.getcwd(), dataset_dir)
+        dataset_files = [os.path.join(full_dir, name) for name in os.listdir(full_dir)]
+        for f in dataset_files:
+            if os.path.isfile(f) and f.endswith(".txt"):
+                yield f
+
+
+
+def split_test_training(positions_w_context):
+    #shuffled_positions = utils.shuffler(positions_w_context, 5000)
+    test_chunk = utils.take_n(10000, positions_w_context)
+    training_chunks = utils.iter_chunks(CHUNK_SIZE, positions_w_context)
+    return test_chunk, training_chunks
+
+
+class DataSet(object):
+    def __init__(self, pos_features, next_movesFrom, next_movesTo, results, is_test=False):
+        self.pos_features = pos_features
+        self.next_movesFrom = next_movesFrom
+        self.next_movesTo = next_movesTo
+        self.results = results
+        self.is_test = is_test
+        assert pos_features.shape[0] == next_movesFrom.shape[0], "Didn't pass in same number of pos_features and next_moves."
+        self.data_size = pos_features.shape[0]
+        self.board_sizeY = pos_features.shape[1]
+        self.board_sizeX = pos_features.shape[2]
+        self.input_planes = pos_features.shape[-1]
+        self._index_within_epoch = 0
+
+    def shuffle(self):
+        perm = np.arange(self.data_size)
+        np.random.shuffle(perm)
+        self.pos_features = self.pos_features[perm]
+        self.next_movesFrom = self.next_movesFrom[perm]
+        self.next_movesTo = self.next_movesTo[perm]
+        self._index_within_epoch = 0
+
+    def get_batch(self, batch_size):
+        #assert batch_size < self.data_size
+        if self._index_within_epoch + batch_size > self.data_size:
+            self.shuffle()
+        start = self._index_within_epoch
+        end = start + batch_size
+        self._index_within_epoch += batch_size
+        return self.pos_features[start:end], self.next_movesFrom[start:end], self.next_movesTo[start:end]
+
+    @staticmethod
+    def from_positions_w_context(positions_w_context, is_test=False):
+        #positions = zip(positions_w_context)
+        extracted_features, moveFroms, moveTos, results= bulk_extract_features(positions_w_context)
+        #encoded_moves = make_onehot(next_moves)
+        return DataSet(extracted_features, moveFroms, moveTos, results, is_test=is_test)
+
+    @staticmethod
+    def from_posmtcs(position,move):
+        # positions = zip(positions_w_context)
+        position.moveFrom = (move[0], move[1])
+        position.moveTo = (move[2], move[3])
+        extracted_features, encoded_moves, results = bulk_extract_features([position])
+        # encoded_moves = make_onehot(next_moves)
+        return DataSet(extracted_features, encoded_moves, results, is_test=False)
+
+    def write(self, filename):
+        header_bytes = struct.pack(CHUNK_HEADER_FORMAT, self.data_size, self.board_sizeY, self.board_sizeX, self.input_planes, self.is_test)
+        position_bytes = np.packbits(self.pos_features).tostring()
+        next_move_bytes = np.packbits(self.next_moves).tostring()
+        with gzip.open(filename, "wb", compresslevel=6) as f:
+            f.write(header_bytes)
+            f.write(position_bytes)
+            f.write(next_move_bytes)
+
+    @staticmethod
+    def read(filename):
+        with gzip.open(filename, "rb") as f:
+            header_bytes = f.read(CHUNK_HEADER_SIZE)
+            data_size, board_sizeY, board_sizeX, input_planes, is_test = struct.unpack(CHUNK_HEADER_FORMAT, header_bytes)
+
+            position_dims = data_size * board_sizeY * board_sizeX * input_planes
+            next_move_dims = data_size * board_sizeY * board_sizeX* board_sizeY * board_sizeX
+
+            # the +7 // 8 compensates for numpy's bitpacking padding
+            packed_position_bytes = f.read((position_dims + 7) // 8)
+            packed_next_move_bytes = f.read((next_move_dims + 7) // 8)
+            # should have cleanly finished reading all bytes from file!
+            assert len(f.read()) == 0
+
+            flat_position = np.unpackbits(np.fromstring(packed_position_bytes, dtype=np.uint8))[:position_dims]
+            flat_nextmoves = np.unpackbits(np.fromstring(packed_next_move_bytes, dtype=np.uint8))[:next_move_dims]
+
+            pos_features = flat_position.reshape(data_size, board_sizeY, board_sizeX, input_planes)
+            next_moves = flat_nextmoves.reshape(data_size, board_sizeY * board_sizeX * board_sizeY * board_sizeX)
+
+        return DataSet(pos_features, next_moves, [], is_test=is_test)
+
+def loadccFile(file):
+    lines = file.readlines()
+    #Matrix = [[0 for x in range(cc.Nx)] for y in range(cc.Ny)]
+    Matrix = np.zeros([cc.Ny, cc.Nx], dtype=np.int8)
+    while (lines):
+
+        lastMove = [int(x) for x in lines[0].split()]
+        nextMove = [int(x) for x in lines[1].split()]
+        winStep = [int(x) for x in lines[2].split()]
+        for lineIndex, y in enumerate(range(cc.Ny)):
+            chessLine = lines[3+ lineIndex]
+            pieceList = list(chessLine)
+            for index in range(0, cc.Nx):
+                Matrix[y,index] = ord(pieceList[index])
+
+        nmFrom = None
+        nmTo = None
+        if len(lastMove) >= 4:
+            nmFrom = (lastMove[1], lastMove[0])
+            nmTo = (lastMove[3], lastMove[2])
+        pos = cc.Position(Matrix, (nextMove[1], nextMove[0]), (nextMove[3], nextMove[2]), winStep[0], winStep[1], nmFrom, nmTo)
+        lines = lines[13:]
+        yield pos
+        Matrix = np.zeros([cc.Ny, cc.Nx], dtype=np.int8)
+
+
+def get_positions_from_sgf(file):
+    ret = []
+    with open(file) as f:
+        for position_w_context in loadccFile(f):
+            yield position_w_context
+
+def parse_data_sets(*data_sets):
+    sgf_files = list(find_sgf_files(*data_sets))
+    print("%s sgfs found." % len(sgf_files), file=sys.stderr)
+    positions_w_context = itertools.chain(*map(get_positions_from_sgf, sgf_files))
+
+    test_chunk, training_chunks = split_test_training(positions_w_context)
+
+    return test_chunk, training_chunks

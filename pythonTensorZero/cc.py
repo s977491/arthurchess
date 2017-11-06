@@ -11,6 +11,7 @@ import copy
 import itertools
 
 import numpy as np
+import archess
 
 # Represent a board as a numpy array, with 0 empty, 1 is black, -1 is white.
 # This means that swapping colors is as simple as multiplying array by -1.
@@ -91,11 +92,182 @@ class Position():
         self.lastMoveFrom = lastMoveFrom
         self.lastMoveTo = lastMoveTo
 
+    def clone(self):
+        return Position(np.copy(self.board), self.moveFrom, self.moveTo,self.win, self.step, self.lastMoveFrom, self.lastMoveTo )
     def move(self, moveFrom, moveTo):
+        self.lastMoveFrom = self.moveFrom
+        self.lastMoveTo = self.moveTo
+        self.moveTo = moveTo
+        self.moveFrom = moveFrom
+
+        ret =self.clone() # snapshot for leanring
         self.board[moveTo] = self.board[moveFrom]
         self.board[moveFrom] = ord(' ')
-        self.lastMoveFrom = moveFrom
-        self.lastMoveTo = moveTo
+        return ret
+
+    def validMov(self, m, allowSame=False):
+        for i in m:
+            if i < 0:
+                return False
+        if m[0] >= Ny or m[2] >=Ny or m[1] >= Nx or m[3] >= Nx:
+            return False
+
+        if allowSame:
+            return True
+        if self.board[m[2], m[3]] < ord('a'):
+            return True
+        return False
+
+    def pcChecker(self, mov, ob, movelist):
+        finish = False
+        if not self.validMov(mov, True):
+            finish = True
+        elif ob == 0:
+            if self.board[mov[2], mov[3]] == ord(' '):
+                movelist.append(mov)
+            else:
+                ob += 1
+        else:
+            if self.board[mov[2], mov[3]] != ord(' ') and self.board[mov[2], mov[3]] <=ord('Z'):
+                movelist.append(mov)
+                finish = True
+
+        return finish, ob
+
+    def possibleMoves(self):
+        ret = []
+        hasKing = False
+        shape = self.board.shape
+        for y in range(shape[0]):
+            for x in range(shape[1]):
+                if self.board[y, x] >= ord('a'):
+                    src = self.board[y, x]
+                    if src == ord('k'):
+                        hasKing = True
+                        for i in range(2):
+                            for sign in range(-1, 2, 2):
+                                j = 1 -i
+                                toY = y + i * sign
+                                toX = x + j * sign
+                                m = (y, x, toY, toX)
+                                if self.validMov(m) and toY <=2 and toX >=3 and toX <=5:
+                                    ret.append(m)
+                    elif src == ord('r'):
+                        toY = y
+                        for toX in range (x -1, -1, -1):
+                            m = (y, x, toY, toX)
+                            if not self.validMov(m):
+                                break
+                            ret.append(m)
+                            if self.board[toY, toX] != ord(' '):
+                                break
+                        for toX in range (x +1, Nx):
+                            m = (y, x, toY, toX)
+                            if not self.validMov(m):
+                                break
+                            ret.append(m)
+                            if self.board[toY, toX] != ord(' '):
+                                break
+                        toX = x
+                        for toY in range (y -1, -1, -1):
+                            m = (y, x, toY, toX)
+                            if not self.validMov(m):
+                                break
+                            ret.append(m)
+                            if self.board[toY, toX] != ord(' '):
+                                break
+                        for toY in range (y +1, Ny):
+                            m = (y, x, toY, toX)
+                            if not self.validMov(m):
+                                break
+                            ret.append(m)
+                            if self.board[toY, toX] != ord(' '):
+                                break
+                    elif src == ord('h'):
+                        for i in range(-1,3, 2):
+                            for j in range(-1, 3, 2):
+                                toY = y + 2 * i
+                                toX = x + 1 * j
+                                m = (y, x, toY, toX)
+                                if self.validMov(m) and self.board[toY - i, x] == ord(' '):
+                                    ret.append(m)
+                                toY = y + 1 * i
+                                toX = x + 2 * j
+                                m = (y, x, toY, toX)
+                                if self.validMov(m) and self.board[y, toX - j] == ord(' '):
+                                    ret.append(m)
+                    elif src == ord('c'):
+                        toY = y
+                        obstacle = 0
+                        for toX in range(x - 1, -1, -1):
+                            m = (y, x, toY, toX)
+                            finish, obstacle = self.pcChecker(m, obstacle, ret)
+                            if finish:
+                                break
+                        obstacle = 0
+                        for toX in range(x + 1, Nx):
+                            m = (y, x, toY, toX)
+                            finish, obstacle = self.pcChecker(m, obstacle, ret)
+                            if finish:
+                                break
+                        toX = x
+                        obstacle = 0
+                        for toY in range(y - 1, -1, -1):
+                            m = (y, x, toY, toX)
+                            finish, obstacle = self.pcChecker(m, obstacle, ret)
+                            if finish:
+                                break
+                        obstacle = 0
+                        for toY in range(y + 1, Ny):
+                            m = (y, x, toY, toX)
+                            finish, obstacle = self.pcChecker(m, obstacle, ret)
+                            if finish:
+                                break
+                    elif src == ord('a'):
+                        for i in range(-1, 3, 2):
+                            toY = y + i
+                            toX = x + i
+                            m = (y, x, toY, toX)
+                            if self.validMov(m) and toY <= 2 and toX >= 3 and toX <= 5:
+                                ret.append(m)
+
+                            toY = y + i
+                            toX = x - i
+                            m = (y, x, toY, toX)
+                            if self.validMov(m) and toY <= 2 and toX >= 3 and toX <= 5:
+                                ret.append(m)
+
+                    elif src == ord('e'):
+                        for i in range(-2, 3, 4):
+                            toY = y + i
+                            toX = x + i
+                            m = (y, x, toY, toX)
+                            if self.validMov(m) and toY <= 4:
+                                ret.append(m)
+                            toY = y + i
+                            toX = x - i
+                            m = (y, x, toY, toX)
+                            if self.validMov(m) and toY <= 4:
+                                ret.append(m)
+                    elif src == ord('p'):
+                        toY = y + 1
+                        toX = x
+                        m = (y, x, toY, toX)
+                        if self.validMov(m):
+                            ret.append(m)
+                        if y > 4:
+                            toY = y
+                            toX = x + 1
+                            m = (y, x, toY, toX)
+                            if self.validMov(m):
+                                ret.append(m)
+                            toX = x - 1
+                            m = (y, x, toY, toX)
+                            if self.validMov(m):
+                                ret.append(m)
+        if hasKing:
+            return ret
+        return []
 
     def flip(self):
         activePlayerPiece = self.board >= ord('a')
@@ -104,8 +276,14 @@ class Position():
         self.board[activePlayerPiece] = self.board[activePlayerPiece] - caseDiff
         self.board[passivePlayerPiece] = self.board[passivePlayerPiece] + caseDiff
         self.board = np.flipud(np.fliplr(self.board))
-        self.lastMoveFrom = (Ny-self.lastMoveFrom[0] -1, Nx-self.lastMoveFrom[1] -1 )
-        self.lastMoveTo = (Ny - self.lastMoveTo[0] - 1, Nx - self.lastMoveTo[1] - 1)
+        if self.lastMoveFrom:
+            self.lastMoveFrom = (Ny-self.lastMoveFrom[0] -1, Nx-self.lastMoveFrom[1] -1 )
+        if self.lastMoveTo:
+            self.lastMoveTo = (Ny - self.lastMoveTo[0] - 1, Nx - self.lastMoveTo[1] - 1)
+        if self.moveFrom:
+            self.moveFrom = (Ny - self.moveFrom[0] - 1, Nx - self.moveFrom[1] - 1)
+        if self.moveTo:
+            self.moveTo = (Ny - self.moveTo[0] - 1, Nx - self.moveTo[1] - 1)
 
     def printBoard(self):
         bs = self.board.shape
@@ -118,6 +296,13 @@ class Position():
         print("last move from %s to %s" %  (self.lastMoveFrom, self.lastMoveTo))
 
     def getWinMove(self):
+        # ret = archess.getMaxEatMove(self.board.tolist())
+        #
+        # if len(ret) == 3:
+        #     if  ret[2] > 0:
+        #         return [(ret[0][0], ret[0][1], ret[1][0], ret[1][1]), ret[2]]
+        # return []
+        #
         coords = [(a, b) for a in range(Ny) for b in range(Nx)]
         coords.sort(key=lambda c: (self.board == ord('K'))[c], reverse=True)
         posKing = coords[0]
@@ -153,16 +338,20 @@ class Position():
             return False
 
         if src == ord('k'):
-            if toY > 2 or toX <3 or toX > 5:
+            if toX <3 or toX > 5:
                 return False
-            if abs(toY-fromY) + abs(toX-fromX) >1 :
-                if tgt != ord('K'):
-                    return False
-                if toX != fromX:
-                    return False
-                for along in (fromY + 1, toY):
+            if tgt == ord('K') and toX == fromX:
+                kingKill = True
+                for along in range(fromY + 1, toY):
                     if self.board[along, fromX] != ord(' '):
-                        return False
+                        kingKill = False
+                        break;
+                if kingKill:
+                    return True
+
+            if toY > 2 or abs(toY-fromY) + abs(toX-fromX) >1 :
+                return False
+
         elif src == ord('r'):
             if fromX != toX and toY != fromY:
                 return False

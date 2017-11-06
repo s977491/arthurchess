@@ -31,11 +31,11 @@ import tensorflow as tf
 import features
 import cc
 import utils
-
+import numpy as np
 EPSILON = 1e-35
 
 class PolicyNetwork(object):
-    def __init__(self, k=180, num_int_conv_layers=11, use_cpu=False):
+    def __init__(self, k=128, num_int_conv_layers=9, use_cpu=False):
         self.num_input_planes = sum(f.planes for f in features.DEFAULT_FEATURES)
         self.k = k
         self.num_int_conv_layers = num_int_conv_layers
@@ -54,8 +54,10 @@ class PolicyNetwork(object):
         # a global_step variable allows epoch counts to persist through multiple training sessions
         global_step = tf.Variable(0, name="global_step", trainable=False)
         RL_global_step = tf.Variable(0, name="RL_global_step", trainable=False)
-        x = tf.placeholder(tf.float32, [None, cc.Ny, cc.Nx, self.num_input_planes])
-        y = tf.placeholder(tf.float32, shape=[None, cc.Ny * cc.Nx * cc.Ny * cc.Nx])
+        x = tf.placeholder(tf.float32, [None, cc.Ny, cc.Nx, self.num_input_planes], name="x")
+        yV = tf.placeholder(tf.float32, shape=[None, 2], name="yV")
+        yFrom = tf.placeholder(tf.float32, shape=[None, cc.Ny * cc.Nx ], name="yFrom")
+        yTo = tf.placeholder(tf.float32, shape=[None, cc.Ny * cc.Nx ], name="yTo")
         # whether this example should be positively or negatively reinforced.
         # Set to 1 for positive, -1 for negative.
         reinforce_direction = tf.placeholder(tf.float32, shape=[])
@@ -93,41 +95,83 @@ class PolicyNetwork(object):
                 W_conv_intermediate.extend([_resnet_weights1, _resnet_weights2])
                 h_conv_intermediate.append(_output_conv)
                 _current_h_conv = _output_conv
+        W_conv_init11FinalPNet = _weight_variable([1, 1, self.k, self.k], name="W_conv_init11FinalPNet")
+        b_conv_init11FinalPNet = tf.Variable(tf.constant(0, shape=[self.k], dtype=tf.float32), name="b_conv_init11FinalPNet")
+        h_conv_initFinalPNet = tf.nn.relu(_conv2d(h_conv_intermediate[-1], W_conv_init11FinalPNet) + b_conv_init11FinalPNet, name="h_conv_initFinalPNet")
 
-        W_conv_final = _weight_variable([1, 1, self.k, cc.Nx * cc.Ny], name="W_conv_final")
-        b_conv_final = tf.Variable(tf.constant(0, shape=[cc.Nx * cc.Ny * cc.Nx * cc.Ny ], dtype=tf.float32), name="b_conv_final")
-        h_conv_final = _conv2d(h_conv_intermediate[-1], W_conv_final)
+        W_conv_finalPnet =_weight_variable([1, 1, self.k, 1], name="W_conv_finalPnet")
+        b_conv_finalPnet = tf.Variable(tf.constant(0, shape=[cc.Nx * cc.Ny ], dtype=tf.float32), name="b_conv_finalPnet")
+        h_conv_finalPnet = _conv2d(h_conv_initFinalPNet, W_conv_finalPnet)
+        fc1Pnet = tf.nn.softmax(tf.reshape(h_conv_finalPnet, [-1, cc.Nx * cc.Ny ]) + b_conv_finalPnet)
 
-        output = tf.nn.softmax(tf.reshape(h_conv_final, [-1, cc.Nx * cc.Ny * cc.Nx * cc.Ny]) + b_conv_final)
-        logits = tf.reshape(h_conv_final, [-1, cc.Nx * cc.Ny * cc.Nx * cc.Ny]) + b_conv_final
+        W_conv_init11FinalPNet2 = _weight_variable([1, 1, self.k, self.k], name="W_conv_init11FinalPNet2")
+        b_conv_init11FinalPNet2 = tf.Variable(tf.constant(0, shape=[self.k], dtype=tf.float32),
+                                             name="b_conv_init11FinalPNet2")
+        h_conv_initFinalPNet2 = tf.nn.relu(
+            _conv2d(h_conv_intermediate[-1], W_conv_init11FinalPNet2) + b_conv_init11FinalPNet2,
+            name="h_conv_initFinalPNet2")
 
-        log_likelihood_cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=y))
+        W_conv_finalPnet2 = _weight_variable([1, 1, self.k, 1], name="W_conv_finalPnet2")
+        b_conv_finalPnet2 = tf.Variable(tf.constant(0, shape=[cc.Nx * cc.Ny ], dtype=tf.float32),
+                                       name="b_conv_finalPnet2")
+        h_conv_finalPnet2 = _conv2d(h_conv_initFinalPNet2, W_conv_finalPnet2)
+        fc1Pnet2 = tf.nn.softmax(tf.reshape(h_conv_finalPnet2, [-1, cc.Nx * cc.Ny ]) + b_conv_finalPnet2)
 
+        W_conv_init11FinalValue = _weight_variable([1, 1, self.k, self.k], name="W_conv_init11FinalValue")
+        b_conv_init11FinalValue = tf.Variable(tf.constant(0, shape=[self.k], dtype=tf.float32),name="b_conv_init11FinalValue")
+        h_conv_initFinalValue = tf.nn.relu(
+            _conv2d(h_conv_intermediate[-1], W_conv_init11FinalValue) + b_conv_init11FinalValue,
+            name="h_conv_initFinalValue")
+
+        W_conv_finalValue = _weight_variable([1, 1, self.k, 1], name="W_conv_finalValue")
+        b_conv_finalValue = tf.Variable(tf.constant(0, shape=[cc.Nx * cc.Ny ], dtype=tf.float32),
+                                       name="b_conv_finalValue")
+        h_conv_finalValue = _conv2d(h_conv_initFinalValue, W_conv_finalValue)
+        fc1Value = tf.nn.relu(tf.reshape(h_conv_finalValue, [-1, cc.Nx * cc.Ny ]) + b_conv_finalValue)
+
+        W_conv_finalSinglValue = _weight_variable([cc.Ny*cc.Nx, 2],
+                                                   name="W_conv_finalSinglValue")
+        b_conv_finalSinglValue = tf.Variable(tf.constant(0, shape=[2], dtype=tf.float32),
+                                              name="b_conv_finalSinglValue")
+
+        fc2Value = tf.nn.softmax((tf.matmul(fc1Value, W_conv_finalSinglValue) + b_conv_finalSinglValue))
+
+        #y_conv = tf.concat([fc2Value, fc1Pnet], 1)
+
+        outputV = fc2Value
+        outputFrom = fc1Pnet
+        outputTo = fc1Pnet2
+        output = (fc2Value, outputFrom,  outputTo)
+
+        log_likelihood_costV = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=outputV, labels=yV))
+        log_likelihood_costFrom = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=outputFrom, labels=yFrom))
+        log_likelihood_costTo = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=outputTo, labels=yTo))
+        log_likelihood_cost = log_likelihood_costV+ log_likelihood_costFrom+ log_likelihood_costTo
         # AdamOptimizer is faster at start but gets really spiky after 2-3 million steps.
         # train_step = tf.train.AdamOptimizer(1e-4).minimize(log_likelihood_cost, global_step=global_step)
         learning_rate = tf.train.exponential_decay(1e-2, global_step, 4 * 10 ** 6, 0.5)
         train_step = tf.train.GradientDescentOptimizer(learning_rate).minimize(log_likelihood_cost, global_step=global_step)
 
-        was_correct = tf.equal(tf.argmax(logits, 1), tf.argmax(y, 1))
+        was_correct = tf.logical_and(tf.equal(tf.argmax(outputFrom, 1), tf.argmax(yFrom, 1)), tf.equal(tf.argmax(outputTo, 1), tf.argmax(yTo, 1)))
         accuracy = tf.reduce_mean(tf.cast(was_correct, tf.float32))
 
         reinforce_step = tf.train.GradientDescentOptimizer(1e-2).minimize(
             log_likelihood_cost * reinforce_direction, global_step=RL_global_step)
 
-        weight_summaries = tf.summary.merge([
-            tf.summary.histogram(weight_var.name, weight_var)
-            for weight_var in [W_conv_init55, W_conv_init11] +  W_conv_intermediate + [W_conv_final, b_conv_final]],
-            name="weight_summaries"
-        )
-        activation_summaries = tf.summary.merge([
-            tf.summary.histogram(act_var.name, act_var)
-            for act_var in [h_conv_init] + h_conv_intermediate + [h_conv_final]],
-            name="activation_summaries"
-        )
+        # weight_summaries = tf.summary.merge([
+        #     tf.summary.histogram(weight_var.name, weight_var)
+        #     for weight_var in [W_conv_init55, W_conv_init11] +  W_conv_intermediate + [W_conv_final, b_conv_final]],
+        #     name="weight_summaries"
+        # )
+        # activation_summaries = tf.summary.merge([
+        #     tf.summary.histogram(act_var.name, act_var)
+        #     for act_var in [h_conv_init] + h_conv_intermediate + [h_conv_final]],
+        #     name="activation_summaries"
+        # )
         saver = tf.train.Saver()
 
         # save everything to self.
-        for name, thing in locals().items():
+        for name, thing in list(locals().items()):
             if not name.startswith('_'):
                 setattr(self, name, thing)
 
@@ -136,6 +180,7 @@ class PolicyNetwork(object):
         self.training_summary_writer = tf.summary.FileWriter(os.path.join(tensorboard_logdir, "training"), self.session.graph)
 
     def initialize_variables(self, save_file=None):
+        self.save_file = save_file
         self.session.run(tf.global_variables_initializer())
         if save_file is not None:
             try:
@@ -163,10 +208,23 @@ class PolicyNetwork(object):
     def get_global_step(self):
         return self.session.run(self.global_step)
 
-    def save_variables(self, save_file):
+    def save_variables(self, save_file = None):
         if save_file is not None:
-            print("Saving checkpoint to %s" % save_file, file=sys.stderr)
-            self.saver.save(self.session, save_file)
+            self.save_file = save_file
+        print("Saving checkpoint to %s" % self.save_file, file=sys.stderr)
+        self.saver.save(self.session, self.save_file)
+
+    def trainOne(self, training_data):
+        batch_x, batch_yFrom, batch_yTo = training_data.get_batch(training_data.data_size)
+        yV = np.zeros([batch_yFrom.shape[0], 2], dtype=np.uint8)
+        yV[:, 1] = 1
+        _, accuracy, cost = self.session.run(
+            [self.train_step, self.accuracy, self.log_likelihood_cost],
+            feed_dict={self.x: batch_x,
+                       self.yV: yV,
+                       self.yFrom: batch_yFrom.reshape(-1, 90),
+                       self.yTo: batch_yTo.reshape(-1, 90),
+                       self.reinforce_direction: 1})
 
     def train(self, training_data, batch_size=32):
         num_minibatches = training_data.data_size // batch_size
@@ -198,8 +256,12 @@ class PolicyNetwork(object):
     def run(self, position):
         'Return a sorted list of (probability, move) tuples'
         processed_position = features.extract_features(position)
-        probabilities = self.session.run(self.output, feed_dict={self.x: processed_position[None, :]})[0]
-        return probabilities.reshape([cc.Ny, cc.Nx, cc.Ny, cc.Nx])
+        probabilities = self.session.run([self.output], feed_dict={self.x: processed_position[None, :]})[0]
+
+        ret = np.concatenate([probabilities[1][0].reshape(10, 9, 1), probabilities[2][0].reshape(10, 9, 1)], axis=2)
+
+        return probabilities[0][0][1], ret
+#        return probabilities.reshape([cc.Ny, cc.Nx, cc.Ny, cc.Nx])
 
     def run_many(self, positions):
         processed_positions = features.bulk_extract_features(positions)
@@ -231,7 +293,7 @@ class StatisticsCollector(object):
     in one pass, so they must be computed in batches. Unfortunately,
     the built-in TF summary nodes cannot be told to aggregate multiple
     executions. Therefore, we aggregate the accuracy/cost ourselves at
-    the python level, and then shove it through the accuracy/cost summary
+    the python level, and then s.reshape(10,9)hove it through the accuracy/cost summary
     nodes to generate the appropriate summary protobufs for writing.
     '''
     graph = tf.Graph()
