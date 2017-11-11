@@ -10,9 +10,7 @@ import cc
 import features
 import os
 import gc
-import psutil
 
-import archess
 import numpy as np
 import random
 import mcts
