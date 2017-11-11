@@ -40,13 +40,12 @@ def split_test_training(positions_w_context):
 
 
 class DataSet(object):
-    def __init__(self, pos_features, next_movesFrom, next_movesTo, results, is_test=False):
+    def __init__(self, pos_features, next_moves,  estV, is_test=False):
         self.pos_features = pos_features
-        self.next_movesFrom = next_movesFrom
-        self.next_movesTo = next_movesTo
-        self.results = results
+        self.next_moves = next_moves
+        self.estV = estV
         self.is_test = is_test
-        assert pos_features.shape[0] == next_movesFrom.shape[0], "Didn't pass in same number of pos_features and next_moves."
+        assert pos_features.shape[0] == next_moves.shape[0], "Didn't pass in same number of pos_features and next_moves."
         self.data_size = pos_features.shape[0]
         self.board_sizeY = pos_features.shape[1]
         self.board_sizeX = pos_features.shape[2]
@@ -57,8 +56,7 @@ class DataSet(object):
         perm = np.arange(self.data_size)
         np.random.shuffle(perm)
         self.pos_features = self.pos_features[perm]
-        self.next_movesFrom = self.next_movesFrom[perm]
-        self.next_movesTo = self.next_movesTo[perm]
+        self.next_moves = self.next_moves[perm]
         self._index_within_epoch = 0
 
     def get_batch(self, batch_size):
@@ -68,14 +66,14 @@ class DataSet(object):
         start = self._index_within_epoch
         end = start + batch_size
         self._index_within_epoch += batch_size
-        return self.pos_features[start:end], self.next_movesFrom[start:end], self.next_movesTo[start:end]
+        return self.pos_features[start:end], self.next_moves[start:end], self.estV[start:end]
 
     @staticmethod
     def from_positions_w_context(positions_w_context, is_test=False):
         #positions = zip(positions_w_context)
-        extracted_features, moveFroms, moveTos, results= bulk_extract_features(positions_w_context)
+        extracted_features, moveFroms, moveTos, results, estV= bulk_extract_features(positions_w_context)
         #encoded_moves = make_onehot(next_moves)
-        return DataSet(extracted_features, moveFroms, moveTos, results, is_test=is_test)
+        return DataSet(extracted_features, moveFroms, moveTos, results, estV, is_test=is_test)
 
     @staticmethod
     def from_posmtcs(position,move):

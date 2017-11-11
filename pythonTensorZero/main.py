@@ -8,9 +8,14 @@ import sys
 import time
 import cc
 import features
+import os
+import gc
+import psutil
 
 import archess
 import numpy as np
+import random
+import mcts
 
 #from gtp_wrapper import make_gtp_instance
 from load_data_sets import DataSet, parse_data_sets
@@ -65,17 +70,18 @@ def getBestMoveWithScore(position, network, side, lessonSet):
     for lesson in lessonSet[-500:]:
         if np.array_equal(lesson.board, position.board):
             forbiddenMove.append((lesson.moveFrom, lesson.moveTo))
-    if side == 1:
-        ret = archess.getMaxEatMove(position.board.tolist())
-        if len(ret) == 3 and ret[2] > 3000:
-            possScoredList = []
-            possScoredList.append(( (1,1,1,1), -1))
-            possScoredList.append(((1, 1, 1, 1), -0))
-            possScoredList.append(((ret[0][0], ret[0][1], ret[1][0], ret[1][1]), 1))
-            possScoredList.sort(key=lambda c: c[1], reverse=True)
-            return possScoredList[0]
+    #if side == 1:
+    # ret = archess.getMaxEatMove(position.board.tolist())
+    # if len(ret) == 3 and ret[2] > 3000:
+    #     possScoredList = []
+    #     possScoredList.append(((ret[0][0], ret[0][1], ret[1][0], ret[1][1]), 1))
+    #     return possScoredList[0]
     with timer("genmoves"):
         possList = position.possibleMoves()
+        for m in possList:
+            if not position.is_move_reasonable(m):
+                print(m)
+
     if not possList:
         return []
     with timer("thinking"):
@@ -87,15 +93,24 @@ def getBestMoveWithScore(position, network, side, lessonSet):
                 continue
             data.move((m[0], m[1]), (m[2], m[3]))
             data.flip()
-            possScoredList.append((m, network.run(data)[0]))
+            possScoredList.append( (m, network.run(data), data))
 
         possScoredList.sort(key=lambda c: c[1]) # need to have the move that give us back lowest score for opp
     if not possScoredList:
         return []
-    return possScoredList[0]
+    position.printBoard()
+    score = possScoredList[0][1]
+    ii = 0
+    for i in range(len(possScoredList)):
+        if possScoredList[i][1] == score:
+            ii += 1
+        print ("chosen move::%s, score %s side:%d" % (possScoredList[i][0], possScoredList[i][1],side))
+    print(random.randint(0, ii-1))
+    return possScoredList[random.randint(0, ii-1)]
 
 def select_most_likely(position, network, side, lessonSet):
     ret = getBestMoveWithScore(position, network, side, lessonSet)
+
     if not ret:
         return []
     # possMov
@@ -143,60 +158,13 @@ def selfplay(read_file):
         n.initialize_variables(None)
         n.save_variables(read_file)
 
-    for game in range(10000):
-        if (game+1) % 20 == 0:
-            print("20 games")
-            n.save_variables()
-        position = cc.get_start_board()
-        side = 0
-        lesson = ([],[])
-        gameEnd = False
-        for step in range(2000): # 1000 step must stop game
-            #position.printBoard();
-            moves = position.getWinMove()
-            if len(moves) > 0:
-                gameEnd = True
-            else:
-                #prob = n.run(position)
-                moves = select_most_likely(position, n, side, lesson[side]) # do MCTS over network
-            if len(moves) == 0:
-                print("Error")
-                # game end
-                break
-            m= moves[0]
-            #take snapshot for future learning
-            data = position.move((m[0], m[1]), (m[2], m[3]))
-            lesson[side].append(data)
-            if not gameEnd:
-                if side == 0:
-                    position.printBoard();
-                position.flip()
-                if side == 1:
-                    position.printBoard();
+    trainer = mcts.MCTSPlayerMixinTrainer(n)
 
-                side = 1 - side
-            else:
-                print("step %d done game, winning for side %d" % (step, side))
-                position.printBoard();
-                #take lesson
-                trainBatch(lesson[side][-15:], 1, n, 1, False)
-                trainBatch(lesson[side], 1, n, 1, False )
-                trainBatch(lesson[1-side], 1, n, -0.5, True )
-                trainBatch(lesson[1 - side][-1:], 1, n, 1, True, True)
-                #try again see if will fail
-                # position = lesson[1-side][-1]
-                # moves = select_most_likely(position, n, 1-side)
-                # print (position.moveFrom)
-                # print(position.moveTo)
-                # print(moves)
-                break
-
-        if not gameEnd:
-            position.printBoard();
-            print("step overflow for game %d" %  game)
-
-    n.save_variables()
-
+    for i in range(1000):
+        temper = False
+        gc.collect()
+        trainer.trainning(i)
+        PolicyNetwork.temper = False
 
 def play(read_file):
     print("loading...")

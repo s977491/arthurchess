@@ -91,6 +91,7 @@ class Position():
         self.step = step
         self.lastMoveFrom = lastMoveFrom
         self.lastMoveTo = lastMoveTo
+        self.v = 0.0
 
     def clone(self):
         return Position(np.copy(self.board), self.moveFrom, self.moveTo,self.win, self.step, self.lastMoveFrom, self.lastMoveTo )
@@ -128,8 +129,9 @@ class Position():
             else:
                 ob += 1
         else:
-            if self.board[mov[2], mov[3]] != ord(' ') and self.board[mov[2], mov[3]] <=ord('Z'):
-                movelist.append(mov)
+            if self.board[mov[2], mov[3]] != ord(' '):
+                if  self.board[mov[2], mov[3]] <= ord('Z'):
+                    movelist.append(mov)
                 finish = True
 
         return finish, ob
@@ -247,7 +249,7 @@ class Position():
                             toY = y + i
                             toX = x - i
                             m = (y, x, toY, toX)
-                            if self.validMov(m) and toY <= 4 and self.board[y+i//2, x+i//2] == ord(' '):
+                            if self.validMov(m) and toY <= 4 and self.board[y+i//2, x-i//2] == ord(' '):
                                 ret.append(m)
                     elif src == ord('p'):
                         toY = y + 1
@@ -285,6 +287,17 @@ class Position():
         if self.moveTo:
             self.moveTo = (Ny - self.moveTo[0] - 1, Nx - self.moveTo[1] - 1)
 
+    def flipH(self):
+        self.board = (np.fliplr(self.board))
+        if self.lastMoveFrom:
+            self.lastMoveFrom = (self.lastMoveFrom[0], Nx-self.lastMoveFrom[1] -1 )
+        if self.lastMoveTo:
+            self.lastMoveTo = ( self.lastMoveTo[0] - 1, Nx - self.lastMoveTo[1] - 1)
+        if self.moveFrom:
+            self.moveFrom = ( self.moveFrom[0] , Nx - self.moveFrom[1] - 1)
+        if self.moveTo:
+            self.moveTo = (self.moveTo[0], Nx - self.moveTo[1] - 1)
+
     def printBoard(self):
         bs = self.board.shape
         for i, y in enumerate(range(bs[0])):
@@ -293,7 +306,7 @@ class Position():
                 print(chr(self.board[y,x]), end=" ")
 
             print("")
-        print("last move from %s to %s" %  (self.lastMoveFrom, self.lastMoveTo))
+        print("last move from %s to %s" %  (self.moveFrom, self.moveTo))
 
     def getWinMove(self):
         # ret = archess.getMaxEatMove(self.board.tolist())
@@ -373,7 +386,7 @@ class Position():
                 if self.board[fromY + (toY - fromY) // 2, fromX] != ord(' '):
                     return False
             if xdiff == 2:
-                if self.board[fromX, fromX + (toX - fromX) // 2] != ord(' '):
+                if self.board[fromY, fromX + (toX - fromX) // 2] != ord(' '):
                     return False
         elif src == ord('c'):
             if fromX != toX and toY != fromY:

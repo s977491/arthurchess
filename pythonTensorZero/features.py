@@ -72,14 +72,14 @@ def recent_move_feature(position):
 def liberty_feature(position):
     return make_onehot(position.get_liberties(), P)
 
-@planes(2)
-def winner_feature(position):
+@planes(1)
+def player_feature(position):
     ones = np.ones([cc.Ny, cc.Nx, 1], dtype=np.uint8)
     zeros = np.zeros([cc.Ny, cc.Nx, 1], dtype=np.uint8)
     if (position.win):
-        return np.concatenate([ones, zeros], axis=2)
+        return ones
     else:
-        return np.concatenate([zeros, ones], axis=2)
+        return zeros
 
 def valid(y,x):
     if y <0 or x <0 or y >=cc.Ny or x >=cc.Nx:
@@ -201,13 +201,13 @@ def fillPlanes4Piece(piece, board, features, plane):
     y, x = np.where(tgtMatrix)
     features[tgtMatrix, plane] = 1
     plane += 1
-    fillPowerCover(board, list(zip(y, x)), features, plane)
-    plane += 1
+    #fillPowerCover(board, list(zip(y, x)), features, plane)
+    #plane += 1
     return plane
 
-@planes(28)
+@planes(14)
 def piece_type_feature(position):
-    features = np.zeros([cc.Ny, cc.Nx, 28], dtype=np.uint8)
+    features = np.zeros([cc.Ny, cc.Nx, 14], dtype=np.uint8)
     kingPiece = ord('k')
     ridePiece = ord('r')
     horsePiece = ord('h')
@@ -238,14 +238,15 @@ def piece_type_feature(position):
     p = fillPlanes4Piece(elePiece2, position.board, features, p)
     p = fillPlanes4Piece(pawnPiece, position.board, features, p)
     p = fillPlanes4Piece(pawnPiece2, position.board, features, p)
-    assert p == 28
+    assert p == 14
 
     return features
 
 DEFAULT_FEATURES = [
-    stone_color_feature,
+#    stone_color_feature,
     piece_type_feature,
     ones_feature,
+#    player_feature,
 #    recent_move_feature,
 ]
 
@@ -255,26 +256,23 @@ def extract_features(position, features=DEFAULT_FEATURES):
 def bulk_extract_features(positions, features=DEFAULT_FEATURES):
     num_positions = len(positions)
     num_planes = sum(f.planes for f in features)
-    output = np.zeros([num_positions, cc.Ny, cc.Nx, num_planes], dtype=np.uint8)
-    moveFrom  = np.zeros([num_positions,cc.Ny, cc.Nx], dtype=np.uint8)
-    moveTo = np.zeros([num_positions, cc.Ny, cc.Nx], dtype=np.uint8)
+    output = np.zeros([num_positions*2, cc.Ny, cc.Nx, num_planes], dtype=np.uint8)
+    move = np.zeros([num_positions*2, cc.Ny, cc.Nx, cc.Ny, cc.Nx], dtype=np.uint8)
 
-    result = np.zeros([num_positions, 2], dtype=np.uint8)
-
+    result = np.zeros([num_positions*2, 2], dtype=np.uint8)
+    estV =  np.zeros([num_positions]*2, dtype=np.float32)
     for i, pos in enumerate(positions):
         output[i] = extract_features(pos, features=features)
-        moveFrom[i, pos.moveFrom[0], pos.moveFrom[1]] = 1
-        moveTo[i, pos.moveTo[0], pos.moveTo[1]] = 1
+        move[i, pos.moveFrom[0], pos.moveFrom[1], pos.moveTo[0], pos.moveTo[1]] = 1
         result[i, 0] = int(pos.win)
         result[i, 1] = min(pos.step, 255)
+        estV[i] = pos.v
+
+        pos.flipH()
+        output[i+num_positions] = extract_features(pos, features=features)
+        move[i+num_positions, pos.moveFrom[0], pos.moveFrom[1], pos.moveTo[0], pos.moveTo[1]] = 1
+        result[i+num_positions, 0] = int(pos.win)
+        result[i+num_positions, 1] = min(pos.step, 255)
+        estV[i+num_positions] = pos.v
     #encode move stuff
-    return output, moveFrom, moveTo, result
-
-
-features = np.zeros([cc.Ny, cc.Nx], dtype=np.uint8)
-features[2,2] = 3
-features[2,3] = 7
-
-aaa = make_onehot(features, 8)
-print(features)
-print(aaa)
+    return output, move.reshape(num_positions, cc.Ny*cc.Nx* cc.Ny*cc.Nx), result, estV

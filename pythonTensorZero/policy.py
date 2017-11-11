@@ -35,7 +35,8 @@ import numpy as np
 EPSILON = 1e-35
 
 class PolicyNetwork(object):
-    def __init__(self, k=128, num_int_conv_layers=15, use_cpu=False):
+    temper = False
+    def __init__(self, k=128, num_int_conv_layers=11, use_cpu=False):
         self.num_input_planes = sum(f.planes for f in features.DEFAULT_FEATURES)
         self.k = k
         self.num_int_conv_layers = num_int_conv_layers
@@ -43,7 +44,10 @@ class PolicyNetwork(object):
         self.training_summary_writer = None
         self.test_stats = StatisticsCollector()
         self.training_stats = StatisticsCollector()
-        self.session = tf.Session()
+        config = tf.ConfigProto()
+        config.intra_op_parallelism_threads = 8
+        config.inter_op_parallelism_threads = 8
+        self.session = tf.Session(config=config)
         if use_cpu:
             with tf.device("/cpu:0"):
                 self.set_up_network()
@@ -55,9 +59,8 @@ class PolicyNetwork(object):
         global_step = tf.Variable(0, name="global_step", trainable=False)
         RL_global_step = tf.Variable(0, name="RL_global_step", trainable=False)
         x = tf.placeholder(tf.float32, [None, cc.Ny, cc.Nx, self.num_input_planes], name="x")
-        yV = tf.placeholder(tf.float32, shape=[None, 2], name="yV")
-        yFrom = tf.placeholder(tf.float32, shape=[None, cc.Ny * cc.Nx ], name="yFrom")
-        yTo = tf.placeholder(tf.float32, shape=[None, cc.Ny * cc.Nx ], name="yTo")
+        yV = tf.placeholder(tf.float32, shape=[None, 1], name="yV")
+        yPos = tf.placeholder(tf.float32, shape=[None, cc.Ny * cc.Nx * cc.Ny * cc.Nx], name="yPos")
         # whether this example should be positively or negatively reinforced.
         # Set to 1 for positive, -1 for negative.
         reinforce_direction = tf.placeholder(tf.float32, shape=[])
@@ -66,6 +69,9 @@ class PolicyNetwork(object):
         def _weight_variable(shape, name):
             # If shape is [5, 5, 20, 32], then each of the 32 output planes
             # has 5 * 5 * 20 inputs.
+            # initial = tf.truncated_normal(shape, stddev=0.1)
+            # return tf.Variable(initial, name=name)
+
             number_inputs_added = utils.product(shape[:-1])
             stddev = 1 / math.sqrt(number_inputs_added)
             # http://neuralnetworksanddeeplearning.com/chap3.html#weight_initialization
@@ -97,25 +103,20 @@ class PolicyNetwork(object):
                 _current_h_conv = _output_conv
         W_conv_init11FinalPNet = _weight_variable([1, 1, self.k, self.k], name="W_conv_init11FinalPNet")
         b_conv_init11FinalPNet = tf.Variable(tf.constant(0, shape=[self.k], dtype=tf.float32), name="b_conv_init11FinalPNet")
-        h_conv_initFinalPNet = tf.nn.relu(_conv2d(h_conv_intermediate[-1], W_conv_init11FinalPNet) + b_conv_init11FinalPNet, name="h_conv_initFinalPNet")
-
-        W_conv_finalPnet =_weight_variable([1, 1, self.k, 1], name="W_conv_finalPnet")
-        b_conv_finalPnet = tf.Variable(tf.constant(0, shape=[cc.Nx * cc.Ny ], dtype=tf.float32), name="b_conv_finalPnet")
-        h_conv_finalPnet = _conv2d(h_conv_initFinalPNet, W_conv_finalPnet)
-        fc1Pnet = tf.nn.softmax(tf.reshape(h_conv_finalPnet, [-1, cc.Nx * cc.Ny ]) + b_conv_finalPnet)
+        h_conv_initFinalPNet = _conv2d(h_conv_intermediate[-1], W_conv_init11FinalPNet) + b_conv_init11FinalPNet
 
         W_conv_init11FinalPNet2 = _weight_variable([1, 1, self.k, self.k], name="W_conv_init11FinalPNet2")
         b_conv_init11FinalPNet2 = tf.Variable(tf.constant(0, shape=[self.k], dtype=tf.float32),
                                              name="b_conv_init11FinalPNet2")
         h_conv_initFinalPNet2 = tf.nn.relu(
-            _conv2d(h_conv_intermediate[-1], W_conv_init11FinalPNet2) + b_conv_init11FinalPNet2,
+            _conv2d(h_conv_initFinalPNet, W_conv_init11FinalPNet2) + b_conv_init11FinalPNet2,
             name="h_conv_initFinalPNet2")
 
-        W_conv_finalPnet2 = _weight_variable([1, 1, self.k, 1], name="W_conv_finalPnet2")
-        b_conv_finalPnet2 = tf.Variable(tf.constant(0, shape=[cc.Nx * cc.Ny ], dtype=tf.float32),
-                                       name="b_conv_finalPnet2")
-        h_conv_finalPnet2 = _conv2d(h_conv_initFinalPNet2, W_conv_finalPnet2)
-        fc1Pnet2 = tf.nn.softmax(tf.reshape(h_conv_finalPnet2, [-1, cc.Nx * cc.Ny ]) + b_conv_finalPnet2)
+        W_conv_finalPnet =_weight_variable([1, 1, self.k, cc.Nx * cc.Ny], name="W_conv_finalPnet")
+        b_conv_finalPnet = tf.Variable(tf.constant(0, shape=[cc.Nx * cc.Ny * cc.Nx * cc.Ny ], dtype=tf.float32), name="b_conv_finalPnet")
+        h_conv_finalPnet = _conv2d(h_conv_initFinalPNet2, W_conv_finalPnet)
+        fc1Pnet = tf.nn.softmax(tf.reshape(h_conv_finalPnet, [-1, cc.Nx * cc.Ny * cc.Nx * cc.Ny]) + b_conv_finalPnet)
+
 
         W_conv_init11FinalValue = _weight_variable([1, 1, self.k, self.k], name="W_conv_init11FinalValue")
         b_conv_init11FinalValue = tf.Variable(tf.constant(0, shape=[self.k], dtype=tf.float32),name="b_conv_init11FinalValue")
@@ -129,30 +130,30 @@ class PolicyNetwork(object):
         h_conv_finalValue = _conv2d(h_conv_initFinalValue, W_conv_finalValue)
         fc1Value = tf.nn.relu(tf.reshape(h_conv_finalValue, [-1, cc.Nx * cc.Ny ]) + b_conv_finalValue)
 
-        W_conv_finalSinglValue = _weight_variable([cc.Ny*cc.Nx, 2],
+        W_conv_finalSinglValue = _weight_variable([cc.Ny*cc.Nx, 1],
                                                    name="W_conv_finalSinglValue")
-        b_conv_finalSinglValue = tf.Variable(tf.constant(0, shape=[2], dtype=tf.float32),
+        b_conv_finalSinglValue = tf.Variable(tf.constant(0, shape=[1], dtype=tf.float32),
                                               name="b_conv_finalSinglValue")
 
-        fc2Value = tf.nn.softmax((tf.matmul(fc1Value, W_conv_finalSinglValue) + b_conv_finalSinglValue))
+        fc2ValueRaw = tf.matmul(fc1Value, W_conv_finalSinglValue) + b_conv_finalSinglValue
+        fc2Value = tf.tanh(fc2ValueRaw)
 
         #y_conv = tf.concat([fc2Value, fc1Pnet], 1)
 
         outputV = fc2Value
-        outputFrom = fc1Pnet
-        outputTo = fc1Pnet2
-        output = (fc2Value, outputFrom,  outputTo)
+        outputPos = fc1Pnet
+        output = (outputV, outputPos)
 
-        log_likelihood_costV = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=outputV, labels=yV))
-        log_likelihood_costFrom = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=outputFrom, labels=yFrom))
-        log_likelihood_costTo = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=outputTo, labels=yTo))
-        log_likelihood_cost = log_likelihood_costV+ log_likelihood_costFrom+ log_likelihood_costTo
+
+        log_likelihood_costV = tf.losses.mean_squared_error(predictions=outputV, labels=yV)
+        log_likelihood_costPos = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=fc1Pnet, labels=yPos))
+        log_likelihood_cost = log_likelihood_costV + log_likelihood_costPos
         # AdamOptimizer is faster at start but gets really spiky after 2-3 million steps.
         # train_step = tf.train.AdamOptimizer(1e-4).minimize(log_likelihood_cost, global_step=global_step)
-        learning_rate = tf.train.exponential_decay(1e-2, global_step, 4 * 10 ** 6, 0.5)
-        train_step = tf.train.GradientDescentOptimizer(learning_rate).minimize(log_likelihood_cost, global_step=global_step)
+        #learning_rate = tf.train.exponential_decay(1e-2, global_step, 4 * 10 ** 6, 0.5)
+        train_step = tf.train.GradientDescentOptimizer(1e-4).minimize(log_likelihood_cost, global_step=global_step)
 
-        was_correct = tf.logical_and(tf.equal(tf.argmax(outputFrom, 1), tf.argmax(yFrom, 1)), tf.equal(tf.argmax(outputTo, 1), tf.argmax(yTo, 1)))
+        was_correct = tf.equal(tf.argmax(outputPos, 1), tf.argmax(yPos, 1))
         accuracy = tf.reduce_mean(tf.cast(was_correct, tf.float32))
 
         reinforce_step = tf.train.GradientDescentOptimizer(1e-2).minimize(
@@ -215,38 +216,35 @@ class PolicyNetwork(object):
         self.saver.save(self.session, self.save_file)
 
     def trainOne(self, training_data, reinforce=1, punish=False):
-        batch_x, batch_yFrom, batch_yTo = training_data.get_batch(training_data.data_size)
-        yV = np.zeros([batch_yFrom.shape[0], 2], dtype=np.uint8)
-        if punish:
-            yV[:, 0] = 1
-        else:
-            yV[:, 1] = 1
+        batch_x, batch_yPos, batch_yV = training_data.get_batch(training_data.data_size)
+
         _, accuracy, cost = self.session.run(
             [self.train_step, self.accuracy, self.log_likelihood_cost],
             feed_dict={self.x: batch_x,
-                       self.yV: yV,
-                       self.yFrom: batch_yFrom.reshape(-1, 90),
-                       self.yTo: batch_yTo.reshape(-1, 90),
+                       self.yV: batch_yV,
+                       self.yPos: batch_yPos.reshape(-1, 8100),
                        self.reinforce_direction: reinforce})
+        print(cost)
 
     def train(self, training_data, batch_size=32):
         num_minibatches = training_data.data_size // batch_size
-        for i in range(num_minibatches):
-            batch_x, batch_y = training_data.get_batch(batch_size)
+        for i in range(num_minibatches+1):
+            if i == num_minibatches:
+                batch_size = training_data.data_size % batch_size
+            if batch_size <= 0:
+                break
+            batch_x, batch_yPos, batch_yV = training_data.get_batch(batch_size)
             _, accuracy, cost = self.session.run(
                 [self.train_step, self.accuracy, self.log_likelihood_cost],
-                feed_dict={self.x: batch_x, self.y: batch_y, self.reinforce_direction: 1})
-            self.training_stats.report(accuracy, cost)
+                feed_dict={self.x: batch_x,
+                           self.yV: batch_yV,
+                           self.yPos: batch_yPos.reshape(-1, 8100),
+                           self.reinforce_direction: 1})
+            self.training_stats.report(accuracy,cost)
 
         avg_accuracy, avg_cost, accuracy_summaries = self.training_stats.collect()
         global_step = self.get_global_step()
         print("Step %d training data accuracy: %g; cost: %g" % (global_step, avg_accuracy, avg_cost))
-        if self.training_summary_writer is not None:
-            activation_summaries = self.session.run(
-                self.activation_summaries,
-                feed_dict={self.x: batch_x, self.y: batch_y, self.reinforce_direction: 1})
-            self.training_summary_writer.add_summary(activation_summaries, global_step)
-            self.training_summary_writer.add_summary(accuracy_summaries, global_step)
 
     def reinforce(self, dataset, direction=1, batch_size=32):
         num_minibatches = dataset.data_size // batch_size
@@ -258,12 +256,15 @@ class PolicyNetwork(object):
 
     def run(self, position):
         'Return a sorted list of (probability, move) tuples'
+        if PolicyNetwork.temper:
+
+            return 0, np.ones([cc.Ny, cc.Nx,cc.Ny, cc.Nx], dtype=np.float32)/cc.Ny/ cc.Nx/cc.Ny/ cc.Nx
         processed_position = features.extract_features(position)
         probabilities = self.session.run([self.output], feed_dict={self.x: processed_position[None, :]})[0]
 
-        ret = np.concatenate([probabilities[1][0].reshape(10, 9, 1), probabilities[2][0].reshape(10, 9, 1)], axis=2)
+        ret = probabilities[1][0].reshape(10, 9, 10, 9)
 
-        return probabilities[0][0][1], ret
+        return probabilities[0][0][0], ret
 #        return probabilities.reshape([cc.Ny, cc.Nx, cc.Ny, cc.Nx])
 
     def run_many(self, positions):
