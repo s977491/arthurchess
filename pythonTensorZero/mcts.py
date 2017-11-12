@@ -167,9 +167,12 @@ class MCTSNode():
 
     def select_leaf(self):
         current = self
+        if current.done >0:
+            print ("strange that root already done!, no solution!")
+            return current
         while current.is_expanded():
             current = max(current.children.values(), key=lambda node: node.action_score)
-            if current.done:
+            if current.done> 0:
                 print("select should avoid this done node, unexpected")
                 return current
         return current
