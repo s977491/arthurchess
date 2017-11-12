@@ -57,6 +57,7 @@ class DataSet(object):
         np.random.shuffle(perm)
         self.pos_features = self.pos_features[perm]
         self.next_moves = self.next_moves[perm]
+        self.estV = self.estV[perm]
         self._index_within_epoch = 0
 
     def get_batch(self, batch_size):

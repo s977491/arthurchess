@@ -297,6 +297,17 @@ class Position():
             self.moveFrom = ( self.moveFrom[0] , Nx - self.moveFrom[1] - 1)
         if self.moveTo:
             self.moveTo = (self.moveTo[0], Nx - self.moveTo[1] - 1)
+    def flipV(self):
+        self.board = (np.flipud(self.board))
+        if self.lastMoveFrom:
+            self.lastMoveFrom = (Ny-1-self.lastMoveFrom[0], self.lastMoveFrom[1]  )
+        if self.lastMoveTo:
+            self.lastMoveTo = ( Ny-1-self.lastMoveTo[0] - 1, self.lastMoveTo[1] )
+        if self.moveFrom:
+            self.moveFrom = ( Ny-1-self.moveFrom[0] ,  self.moveFrom[1] )
+        if self.moveTo:
+            self.moveTo = (Ny-1-self.moveTo[0], self.moveTo[1] )
+
 
     def printBoard(self):
         bs = self.board.shape

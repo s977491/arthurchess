@@ -48,6 +48,7 @@ class PolicyNetwork(object):
         config.intra_op_parallelism_threads = 8
         config.inter_op_parallelism_threads = 8
         self.session = tf.Session(config=config)
+        self.weightList = []
         if use_cpu:
             with tf.device("/cpu:0"):
                 self.set_up_network()
@@ -75,7 +76,9 @@ class PolicyNetwork(object):
             number_inputs_added = utils.product(shape[:-1])
             stddev = 1 / math.sqrt(number_inputs_added)
             # http://neuralnetworksanddeeplearning.com/chap3.html#weight_initialization
-            return tf.Variable(tf.truncated_normal(shape, stddev=stddev), name=name)
+            w = tf.Variable(tf.truncated_normal(shape, stddev=stddev), name=name)
+            self.weightList.append(w)
+            return w
 
         def _conv2d(x, W):
             return tf.nn.conv2d(x, W, strides=[1,1,1,1], padding="SAME")
@@ -147,11 +150,17 @@ class PolicyNetwork(object):
 
         log_likelihood_costV = tf.losses.mean_squared_error(predictions=outputV, labels=yV)
         log_likelihood_costPos = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=fc1Pnet, labels=yPos))
-        log_likelihood_cost = log_likelihood_costV + log_likelihood_costPos
+
+        regLoss = tf.nn.l2_loss(self.weightList[0])
+        for w in self.weightList[1:]:
+            regLoss = regLoss + tf.nn.l2_loss(w)
+
+        log_likelihood_cost = tf.reduce_mean(log_likelihood_costV + log_likelihood_costPos + 1e-4 * regLoss)
         # AdamOptimizer is faster at start but gets really spiky after 2-3 million steps.
         # train_step = tf.train.AdamOptimizer(1e-4).minimize(log_likelihood_cost, global_step=global_step)
         #learning_rate = tf.train.exponential_decay(1e-2, global_step, 4 * 10 ** 6, 0.5)
-        train_step = tf.train.GradientDescentOptimizer(1e-4).minimize(log_likelihood_cost, global_step=global_step)
+        train_step = tf.train.MomentumOptimizer(1e-2, 0.9).minimize(log_likelihood_cost, global_step=global_step)
+        #train_step = tf.train.GradientDescentOptimizer(1e-2).minimize(log_likelihood_cost, global_step=global_step)
 
         was_correct = tf.equal(tf.argmax(outputPos, 1), tf.argmax(yPos, 1))
         accuracy = tf.reduce_mean(tf.cast(was_correct, tf.float32))

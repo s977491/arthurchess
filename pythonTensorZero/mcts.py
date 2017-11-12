@@ -21,7 +21,9 @@ def timer(message):
 
 CHUNK_HEADER_FORMAT = "iiii?"
 
-c_PUCT = 0.005
+c_PUCT = 3
+eee = 0.5
+
 
 class MCTSNode():
     '''
@@ -47,11 +49,18 @@ class MCTSNode():
         self.parent = parent # pointer to another MCTSNode
         self.move = move # the move that led to this node
         self.prior = prior
+        if MCTSNode.temper:
+            noiseFn = np.random.dirichlet((3, 97), 1)
+            self.prior = self.prior * (1 - eee) + eee * noiseFn[0][0]
+        else:
+            self.prior = self.prior
+
         self.position = None # lazily computed upon expansion
         self.children = {} # map of moves to resulting MCTSNode
         self.Q = self.parent.Q if self.parent is not None else 0 # average of all outcomes involving this node
-        self.U = prior # monte carlo exploration bonus
         self.N = 0 # number of times node was visited
+        self.calU()  # monte carlo exploration bonus
+
         self.W = 0
         self.done = False
         #self.estV = 0
@@ -66,7 +75,7 @@ class MCTSNode():
         # as opposed to avg(map(weighted_average, values, rollouts))
         if not MCTSNode.temper:
             #noiseFn = np.random.dirichlet((3, 97), 1)
-            return self.Q
+            return self.Q  + self.U
 
         return self.Q + self.U
     def is_expanded(self):
@@ -123,25 +132,21 @@ class MCTSNode():
                 sumProb += 0.001
                 probMap[mov] = 0.001
         samples = len(probMap)
-        if MCTSNode.temper:
-            noiseFn = np.random.dirichlet((3, 97), samples)
-            ni = 0
-            eee = 0.25
 
         for move, prob in probMap.items():
             pp = prob / sumProb
-            if MCTSNode.temper:
-                ppp = pp* (1 - eee) + eee * noiseFn[ni][0]
-                ni +=1
-            else:
-                ppp = pp
-            self.children[move] = MCTSNode(self, move, ppp)
+
+            self.children[move] = MCTSNode(self, move, pp)
 
         if won == 1:
             self.children[move].done = won
 
 
         return won
+    def calU(self):
+
+
+        self.U = c_PUCT * (self.prior) / (1 + self.N)
 
     def backup_valueImpl(self, node, value):
         node.N += 1
@@ -155,7 +160,7 @@ class MCTSNode():
         # This incrementally calculates node.Q = average(Q of children),
         # given the newest Q value and the previous average of N-1 values.
 
-        node.U = c_PUCT * math.sqrt(node.parent.N) * (node.prior) / node.N
+        self.calU()
 
     def backup_value(self, value):
         node = self
@@ -206,7 +211,7 @@ class MCTSPlayerMixinTrainer:
         curRoot = root
         winMove = None
         side = 1
-        for step in range(350):
+        for step in range(300):
             winMove = position.getWinMove()
             if winMove:
                 position.printBoard()
@@ -214,7 +219,7 @@ class MCTSPlayerMixinTrainer:
                 won = 1
                 break
             start = time.time()
-            if step > 8:
+            if step > 3:
                 MCTSNode.temper = True
 
             loop = 0
@@ -236,10 +241,13 @@ class MCTSPlayerMixinTrainer:
             nextMove = sorted_moves[0]
             position.move((nextMove[0], nextMove[1]), (nextMove[2], nextMove[3]) )
 
-            position.printBoard()
+            if side ==1:
+                position.printBoard()
             print("Game: %d Step %d" %(gameNo, step))
 
             position.flip()
+            if side == -1:
+                position.printBoard()
             side = -side
 
             #free memory of nephrew
@@ -266,11 +274,15 @@ class MCTSPlayerMixinTrainer:
         yVArr = []
         yMovArr =[]
 
-        while lastRoot.parent is not None:
+        while lastRoot is not None:
             if not lastRoot.children:
                 print ("unexpected no children root!")
             else:
+                yv = np.zeros([1], dtype=np.float32)
+                yv[0] = lastRoot.Q
+
                 totalQ = 0
+
                 pos1 = lastRoot.position
                 moveArr = np.zeros([cc.Ny, cc.Nx, cc.Ny, cc.Nx], dtype=np.float32)
                 for move, node in lastRoot.children.items():
@@ -281,8 +293,6 @@ class MCTSPlayerMixinTrainer:
                 yMovArr.append(moveArr.ravel())
                 featureArr.append(features.extract_features(pos1))
 
-                yv = np.zeros([1], dtype=np.float32)
-                yv[0] = lastRoot.Q
                 yVArr.append(yv)
 
                 moveArr = np.zeros([cc.Ny, cc.Nx, cc.Ny, cc.Nx], dtype=np.float32)
@@ -294,9 +304,30 @@ class MCTSPlayerMixinTrainer:
                 moveArr = moveArr / totalQ
                 yMovArr.append(moveArr.ravel())
                 featureArr.append(features.extract_features(pos2))
+                yVArr.append(yv)
+                # vertical
+                moveArr = np.zeros([cc.Ny, cc.Nx, cc.Ny, cc.Nx], dtype=np.float32)
+                pos3 = lastRoot.position.clone()
+                pos3.flipV()
+                for move, node in lastRoot.children.items():
+                    moveArr[cc.Ny-1-move[0], move[1], cc.Ny-1-move[2], move[3]] = node.Q
 
-                yv = np.zeros([1], dtype=np.float32)
-                yv[0] = lastRoot.Q
+                moveArr = moveArr / totalQ
+                yMovArr.append(moveArr.ravel())
+                featureArr.append(features.extract_features(pos3))
+                yVArr.append(yv)
+
+                #vertical + horib
+                moveArr = np.zeros([cc.Ny, cc.Nx, cc.Ny, cc.Nx], dtype=np.float32)
+                pos4 = lastRoot.position.clone()
+                pos4.flipH()
+                pos4.flipV()
+                for move, node in lastRoot.children.items():
+                    moveArr[cc.Ny-1-move[0],cc.Nx-1- move[1], cc.Ny-1-move[2],cc.Nx-1- move[3]] = node.Q
+
+                moveArr = moveArr / totalQ
+                yMovArr.append(moveArr.ravel())
+                featureArr.append(features.extract_features(pos4))
                 yVArr.append(yv)
 
             lastRoot = lastRoot.parent
@@ -305,8 +336,9 @@ class MCTSPlayerMixinTrainer:
 
 
         with timer("training"):
-            for i in range(5):
+            for i in range(3):
                 self.policy_network.train(training_datasets)
+                training_datasets.shuffle()
 
         self.policy_network.save_variables()
 
@@ -363,6 +395,9 @@ class MCTSPlayerMixinTrainer:
         # value = self.estimate_value(root, chosen_leaf)
         # backup
         #print("value: %s" % yv, file=sys.stderr)
+        # if MCTSNode.temper:
+        #     noiseFn = (random.randint(0, 10000) -5000)/ 10000
+        #     yv = yv * (1- eee) + (eee * noiseFn[0][0]
         chosen_leaf.backup_value(yv)
         return chosen_leaf
 

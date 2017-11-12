@@ -43,14 +43,13 @@ def planes(num_planes):
         return f
     return deco
 
-@planes(3)
+@planes(2)
 def stone_color_feature(position):
     board = position.board
-    features = np.zeros([cc.Ny, cc.Nx, 3], dtype=np.uint8)
+    features = np.zeros([cc.Ny, cc.Nx, 2], dtype=np.uint8)
     lowerFirst = ord('a')
     emptyPlayer= ord(' ')
 
-    features[board == emptyPlayer, 2] = 1
     features[board >= lowerFirst, 0] = 1
     features[np.logical_and(board!=emptyPlayer, board<lowerFirst), 1] = 1
 
@@ -243,9 +242,9 @@ def piece_type_feature(position):
     return features
 
 DEFAULT_FEATURES = [
-#    stone_color_feature,
+    stone_color_feature,
     piece_type_feature,
-    ones_feature,
+    #ones_feature,
 #    player_feature,
 #    recent_move_feature,
 ]
