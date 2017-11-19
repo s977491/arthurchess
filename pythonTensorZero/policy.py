@@ -36,7 +36,7 @@ EPSILON = 1e-35
 
 class PolicyNetwork(object):
     temper = False
-    def __init__(self, k=128, num_int_conv_layers=11, use_cpu=False):
+    def __init__(self, k=256, num_int_conv_layers=11, use_cpu=False):
         self.num_input_planes = sum(f.planes for f in features.DEFAULT_FEATURES)
         self.k = k
         self.num_int_conv_layers = num_int_conv_layers

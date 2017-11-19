@@ -21,8 +21,8 @@ def timer(message):
 
 CHUNK_HEADER_FORMAT = "iiii?"
 
-c_PUCT = 3
-eee = 0.5
+c_PUCT = 4
+eee = 0.1
 
 
 class MCTSNode():
@@ -42,6 +42,7 @@ class MCTSNode():
         #artprob = np.ones([cc.Ny, cc.Nx, cc.Ny, cc.Nx], dtype=np.float32) / cc.Ny / cc.Nx / cc.Ny / cc.Nx
         #noiseFn = np.random.dirichlet((3, 97), cc.Ny*cc.Nx*cc.Ny* cc.Nx)[:,0].reshape(cc.Ny, cc.Nx, cc.Ny, cc.Nx)
         #artprob += noiseFn
+        node.moved = True
         node.expand(move_probabilities)
         return node
 
@@ -57,12 +58,15 @@ class MCTSNode():
 
         self.position = None # lazily computed upon expansion
         self.children = {} # map of moves to resulting MCTSNode
-        self.Q = self.parent.Q if self.parent is not None else 0 # average of all outcomes involving this node
-        self.N = 0 # number of times node was visited
+        self.Q = -self.parent.Q if self.parent is not None else 0 # average of all outcomes involving this node
+        self.N = 1 # number of times node was visited
         self.calU()  # monte carlo exploration bonus
 
-        self.W = 0
+        self.W = -self.parent.Q if self.parent is not None else 0
         self.done = False
+
+        self.moved = False
+
         #self.estV = 0
 
     def __repr__(self):
@@ -149,9 +153,12 @@ class MCTSNode():
         self.U = c_PUCT * (self.prior) / (1 + self.N)
 
     def backup_valueImpl(self, node, value):
+        if node.moved: # the root node of current move, no need to prop up to make the calculation wrong using N in probabilities
+            return
         node.N += 1
         node.W += value
         node.Q = node.W / node.N
+
 
         if node.parent is None:
             # No point in updating Q / U values for root, since they are
@@ -160,7 +167,7 @@ class MCTSNode():
         # This incrementally calculates node.Q = average(Q of children),
         # given the newest Q value and the previous average of N-1 values.
 
-        self.calU()
+        node.calU()
 
     def backup_value(self, value):
         node = self
@@ -211,22 +218,22 @@ class MCTSPlayerMixinTrainer:
         curRoot = root
         winMove = None
         side = 1
-        for step in range(300):
+        for step in range(350):
             winMove = position.getWinMove()
             if winMove:
                 position.printBoard()
-                print("Game End, side %d win" % (step %2))
+                print("Game End, side %d win, move %s" % (step %2, winMove))
                 won = 1
                 break
             start = time.time()
-            if step > 3:
+            if step > 19:
                 MCTSNode.temper = True
 
             loop = 0
             hintNode = None
             #while time.time() - start < self.seconds_per_move:
             with timer("treeSearching"):
-                for loop in range(200):
+                for loop in range(300):
                     hintNode = self.tree_search(curRoot, hintNode)
                     #loop += 1
 
@@ -246,6 +253,7 @@ class MCTSPlayerMixinTrainer:
             print("Game: %d Step %d" %(gameNo, step))
 
             position.flip()
+
             if side == -1:
                 position.printBoard()
             side = -side
@@ -255,6 +263,7 @@ class MCTSPlayerMixinTrainer:
                 if broMove != nextMove: #clear it
                     broNode.children.clear()
             curRoot = curRoot.children[nextMove]
+            curRoot.moved = True
 
 
         if not curRoot.is_expanded():
@@ -286,8 +295,8 @@ class MCTSPlayerMixinTrainer:
                 pos1 = lastRoot.position
                 moveArr = np.zeros([cc.Ny, cc.Nx, cc.Ny, cc.Nx], dtype=np.float32)
                 for move, node in lastRoot.children.items():
-                    totalQ += node.Q
-                    moveArr[move] = node.Q
+                    totalQ += node.N
+                    moveArr[move] = node.N
 
                 moveArr = moveArr / totalQ
                 yMovArr.append(moveArr.ravel())
@@ -299,7 +308,7 @@ class MCTSPlayerMixinTrainer:
                 pos2 = lastRoot.position.clone()
                 pos2.flipH()
                 for move, node in lastRoot.children.items():
-                    moveArr[move[0],cc.Nx-1- move[1], move[2],cc.Nx-1- move[3]] = node.Q
+                    moveArr[move[0],cc.Nx-1- move[1], move[2],cc.Nx-1- move[3]] = node.N
 
                 moveArr = moveArr / totalQ
                 yMovArr.append(moveArr.ravel())
@@ -310,7 +319,7 @@ class MCTSPlayerMixinTrainer:
                 pos3 = lastRoot.position.clone()
                 pos3.flipV()
                 for move, node in lastRoot.children.items():
-                    moveArr[cc.Ny-1-move[0], move[1], cc.Ny-1-move[2], move[3]] = node.Q
+                    moveArr[cc.Ny-1-move[0], move[1], cc.Ny-1-move[2], move[3]] = node.N
 
                 moveArr = moveArr / totalQ
                 yMovArr.append(moveArr.ravel())
@@ -323,7 +332,7 @@ class MCTSPlayerMixinTrainer:
                 pos4.flipH()
                 pos4.flipV()
                 for move, node in lastRoot.children.items():
-                    moveArr[cc.Ny-1-move[0],cc.Nx-1- move[1], cc.Ny-1-move[2],cc.Nx-1- move[3]] = node.Q
+                    moveArr[cc.Ny-1-move[0],cc.Nx-1- move[1], cc.Ny-1-move[2],cc.Nx-1- move[3]] = node.N
 
                 moveArr = moveArr / totalQ
                 yMovArr.append(moveArr.ravel())
@@ -336,36 +345,34 @@ class MCTSPlayerMixinTrainer:
 
 
         with timer("training"):
-            for i in range(3):
-                self.policy_network.train(training_datasets)
+            for i in range(2):
                 training_datasets.shuffle()
+                self.policy_network.train(training_datasets)
 
         self.policy_network.save_variables()
 
     def tree_search(self, root, hintNode):
-        #print("tree search", file=sys.stderr)
-        # selection
-        useHint = False
-        node = hintNode
-        hintNodeDepth = -1
-        justLost = False
-        if hintNode is not None and len(hintNode.children) == 1:
-            justLost = True
-        while not node is None:
-            hintNodeDepth +=1
-            if node == root:
-                useHint = True
-                break
-            # if justLost:
-            #     print("JustLost Move parents mv %s" % [node.move])
-            node = node.parent
-        if useHint and hintNodeDepth >20:
-            searchNode=hintNode
-            for depth in range(hintNodeDepth):
-                searchNode = searchNode.parent
-            chosen_leaf = searchNode.select_leaf()
-        else:
-            chosen_leaf = root.select_leaf()
+
+        # useHint = False
+        # node = hintNode
+        # hintNodeDepth = -1
+        # justLost = False
+        # if hintNode is not None and len(hintNode.children) == 1:
+        #     justLost = True
+        # while not node is None:
+        #     hintNodeDepth +=1
+        #     if node == root:
+        #         useHint = True
+        #         break
+        #     node = node.parent
+        # if useHint and hintNodeDepth >20:
+        #     searchNode=hintNode
+        #     for depth in range(hintNodeDepth):
+        #         searchNode = searchNode.parent
+        #     chosen_leaf = searchNode.select_leaf()
+        # else:
+
+        chosen_leaf = root.select_leaf()
         # expansion
         if chosen_leaf.done ==1 :
             chosen_leaf.backup_value(1)
@@ -398,7 +405,12 @@ class MCTSPlayerMixinTrainer:
         # if MCTSNode.temper:
         #     noiseFn = (random.randint(0, 10000) -5000)/ 10000
         #     yv = yv * (1- eee) + (eee * noiseFn[0][0]
-        chosen_leaf.backup_value(yv)
+        if not math.isnan(yv):
+            chosen_leaf.backup_value(yv)
+        else:
+            print("unexpected yv nana")
+            chosen_leaf.backup_value(0)
+
         return chosen_leaf
 
     # def estimate_value(self, root, chosen_leaf):
