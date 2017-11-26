@@ -19,14 +19,15 @@ using namespace std;
 #define pp 7
 
 #define invalid -100000000
+
 int PieceScore[] = {0, 10000000, 10000, 5000, 5000, 2500, 2500, 1000};
 
 class Move {
 public:
 	int x1 = -1;
-	int y1;
-	int x2;
-	int y2;
+	int y1 = -1;
+	int x2= -1;
+	int y2= -1;
 
 	int ate;
 
@@ -150,6 +151,14 @@ public:
 					}
 					int piece = v * sign;
 					score += PieceScore[v] * sign;
+					if (v == pp) {
+						if (sign > 0 &&  i > 4 && i < 9)
+							score += 1500;
+						else if (sign < 0 && i <5 && i >0 )
+							score -= 1500;
+					}
+
+
 					if (sign > 0) {
 						posList.push_back(Piece(i,j, piece));
 					}
@@ -160,7 +169,12 @@ public:
 				}
 		    }
 		}
-
+//		for (int i = 0; i < 10; ++i) {
+//			for (int j = 0; j < 9; ++j) {
+//				cout << board[i][j] << " " ;
+//			}
+//			cout << endl;
+//		}
 		valid = true;
 	}
 	bool isValid() {
@@ -193,13 +207,10 @@ public:
 			if (p >0) {
 				swap(pAteList, pMoveList);
 			}
-			int oriScore = score;
+			//int oriScore = score;
 			if (move.ate != 0) {
-				int scoreChange =  PieceScore[abs(move.ate)];
-				if (move.ate > 0)
-					score -= scoreChange;
-				else
-					score += scoreChange;
+				// = getPieceScore(move.y2, move.x2, move.ate, pMoveList);
+				//score += scoreChange;
 
 				for (auto& piece : *pAteList){
 					if (piece.y == move.y2 && piece.x == move.x2) {
@@ -215,7 +226,7 @@ public:
 					break;
 				}
 			}
-			move.score = score - oriScore;
+			//move.score = score - oriScore;
 		}
 
 		//cout << setfill('0') << setw(2) <<  "after move"<< endl << toString() <<endl;
@@ -240,11 +251,6 @@ public:
 			}
 		}
 		if (move.ate != 0) {
-			int scoreChange =  PieceScore[abs(move.ate)];
-			if (move.ate > 0)
-				score += scoreChange;
-			else
-				score -= scoreChange;
 
 			for (auto& piece : *pAteList){
 				if (piece.piece ==move.ate  && piece.dead ) {
@@ -309,12 +315,16 @@ public:
 			for (int i = -2; i < 3; i+=4) {
 				mov.y2 = piece.y +i;
 				mov.x2 = piece.x +i;
-				if (validMov(mov) && ((mov.y2 <=4 && mov.y1 <=4) || (mov.y2 >4 && mov.y1 >4))){
+				int blockY = (mov.y2 + mov.y1) / 2;
+				int blockX = (mov.x2 + mov.x1) / 2;
+				if (validMov(mov) && board[blockY][blockX] == 0 && ((mov.y2 <=4 && mov.y1 <=4) || (mov.y2 >4 && mov.y1 >4))){
 					ret.push_back(mov);
 				}
 				mov.y2 = piece.y +i;
 				mov.x2 = piece.x -i;
-				if (validMov(mov) && ((mov.y2 <=4 && mov.y1 <=4) || (mov.y2 >4 && mov.y1 >4))){
+				blockY = (mov.y2 + mov.y1) / 2;
+				blockX = (mov.x2 + mov.x1) / 2;
+				if (validMov(mov) && board[blockY][blockX] == 0 && ((mov.y2 <=4 && mov.y1 <=4) || (mov.y2 >4 && mov.y1 >4))){
 					ret.push_back(mov);
 				}
 			}
@@ -435,18 +445,43 @@ public:
 			else {
 				obstacle++;
 			}
+			return false;
 		}
-		else {
+		else if (obstacle == 1){
 			if (board[mov.y2][mov.x2] * board[mov.y1][mov.x1]  <0)
 			{
 				ret.push_back(mov);
+			}
+			if (board[mov.y2][mov.x2] != 0){
+				++obstacle;
 				return true;
 			}
+			return false;
 		}
-		return false;
+		return true;
 	}
-
-	Move getMaxScoreMove( int sign, int level) {
+	int getPieceScore(int y, int x, int piece, vector<Piece>* pieceSideList) {
+		Piece* pMyKingPiece = nullptr;
+		for (Piece p : (*pieceSideList)) {
+			if (abs(p.piece) == pk){
+				pMyKingPiece = &p;
+				break;
+			}
+		}
+		int scoreChange =  PieceScore[abs(piece)];
+		if (abs(piece) == pp) { //crossed river has more power unless at the bottom
+			if (pMyKingPiece->y > 5 && y > 4 && y < 9) {
+				scoreChange += 1500;
+			} else if (pMyKingPiece->y < 4 && y <= 4 && y >0 ) {
+				scoreChange += 1500;
+			}
+		}
+		if (piece > 0)
+			return -scoreChange;
+		else
+			return scoreChange;
+	}
+	Move getMaxScoreMove( int sign, int level, int lastScore) {
 		vector<Move> scoredMove;
 		scoredMove.reserve(160);
 		vector<Piece> * ptrList = &posList;
@@ -459,20 +494,42 @@ public:
 			for (auto move : possibleMove) {
 				if (board[move.y1][move.x1] * board[move.y2][move.x2] >= 0)
 					continue;
-//				if (level == 0)
-//					cout << " first play possible move:" << move.toString() << endl;
+
+				//cout << "Lvl:" << level << "studying move : " << move.toString() << " lastScore" << lastScore  <<endl;
+
 				if (abs(board[move.y2][move.x2]) ==pk){
 					move.score = sign * PieceScore[pk];
 					move.finalizeMove();
 					return move;
 				}
-				int lastScore = move.score;
+
+				//dont consider some can't get back score move
+				int ate = board[move.y2][move.x2];
+				int scoreChange = getPieceScore(move.y2, move.x2, ate, ptrList);
+
+				bool canSkip = false;
+				{
+					if (abs(scoreChange) < abs(lastScore)) {
+						//cout << "Lvl:" << level << " move rev store not enough MScore" <<  scoreChange  << "  LScore" << lastScore <<endl;
+
+						//cannot revenage back, do not consider this, just return
+						move.ate = board[move.y2][move.x2];
+						move.score = scoreChange / 2; // try to short cut and est 1/2 of the value
+						scoredMove.push_back(move);
+
+						continue;
+					}
+				}
+
 				vector<Piece> posTmpList = posList;
 				vector<Piece> negTmpList = negList;
+				int nextScore = lastScore + scoreChange;
+				move.score = scoreChange;
 				apply(move);
 				Move tmpMove = move;
 				{
-					Move nextMove = getMaxScoreMove(-sign, level + 1); //actual score
+					Move nextMove = getMaxScoreMove(-sign, level + 1, nextScore - 1); //actual score
+
 					if (abs(nextMove.score) != PieceScore[pk] ) { // must not allow other to kill own king
 						tmpMove.addMove(nextMove);
 						if (tmpMove.score* sign > 0)
@@ -482,7 +539,7 @@ public:
 				rollback(move);
 				posList = posTmpList;
 				negList = negTmpList;
-				move.score = lastScore;
+				//move.score = lastScore;
 			}
 		}
 
@@ -507,13 +564,13 @@ public:
 		Move ret = scoredMove[rand()%index];
 		ret.finalizeMove();
 
-		if (level == 0){
-			cout << "chosen:" <<  ret.y1 << "," << ret.x1 << " to " << ret.y2 << "," << ret.x2 << " :score:" << ret.score << endl;
+//		if (level <= 0){
+//			cout << "chosen:" <<  ret.y1 << "," << ret.x1 << " to " << ret.y2 << "," << ret.x2 << " :score:" << ret.score << endl;
 //			cout << "move path" << endl;
 //			for (auto m : ret.moveList) {
 //				cout << m.toString() <<endl;
 //			}
-		}
+//		}
 		return ret;
 
 	}
@@ -537,12 +594,15 @@ public:
 		}
 		return oss.str();
 	}
+
+	int score = 0;
 private:
 	bool valid = false;
 	vector< vector<int>  > board;
 	vector<Piece> posList;
 	vector<Piece> negList;
-	int score;
+
+
 };
 static PyObject *archessError;
 int Prime(int n) {
@@ -567,19 +627,90 @@ int Prime(int n) {
 
 extern "C"
 {
-static PyObject* archess_Prime(PyObject *self, PyObject *args) {
+static PyObject* getYv(PyObject *self, PyObject *args) {
 	int n =0 ;
-	if (!PyArg_ParseTuple(args, "i", &n)) return NULL;
-	return Py_BuildValue("i", Prime(n));
+	PyObject *pList;
+	PyObject *pItem;
+	PyObject *pItemList;
+
+	int i;
+	int score = 0;
+	if (!PyArg_ParseTuple(args, "O!", &PyList_Type, &pList)) {
+		PyErr_SetString(PyExc_TypeError, "parameter must be a list.");
+		return PyTuple_New(0);
+	}
+	int ny = PyList_Size(pList);
+	for (i=0; i<ny; i++) {
+		pItemList = PyList_GetItem(pList, i);
+
+		if (!PyList_Check(pItemList))
+		{
+			PyErr_SetString(PyExc_TypeError, "parameter must be a list of list.");
+			return PyTuple_New(0);
+		}
+		int nx = PyList_Size(pItemList);
+		for (int j = 0; j < nx; ++j) {
+			pItem = PyList_GetItem(pItemList, j);
+//
+			if(!PyLong_Check(pItem)) {
+				PyErr_SetString(PyExc_TypeError, "list items must be integers.");
+				return PyTuple_New(0);
+			}
+			int v = (int ) PyLong_AsLong(pItem);
+			if (v != ' ') {
+				int sign = 1;
+				if (v < 'a') {
+					sign = -1;
+					v = v + 'a' - 'A';
+				}
+				switch (v) {
+				case 'k':
+					v = pk;
+					break;
+				case 'r':
+					v = pr;
+					break;
+				case 'h':
+					v = ph;
+					break;
+				case 'c':
+					v = pc;
+					break;
+				case 'a':
+					v = pa;
+					break;
+				case 'e':
+					v = pe;
+					break;
+				case 'p':
+					v = pp;
+					break;
+				default:
+					PyErr_SetString(PyExc_TypeError, "invalid piece found in matrix");
+					return PyTuple_New(0);
+				}
+				int piece = v * sign;
+				score += PieceScore[v] * sign;
+				if (v == pp) {
+					if (sign > 0 &&  i > 4 && i < 9)
+						score += 1500;
+					else if (sign < 0 && i <5 && i >0 )
+						score -= 1500;
+				}
+			}
+		}
+	}
+	return Py_BuildValue("i", score);
 }
 static PyObject* getMaxEatMove(PyObject *self, PyObject *args) {
 	int n =0 ;
 	Chess chess(args);
 
 	if (chess.isValid()){
-		Move m = chess.getMaxScoreMove(1, 0);
 
-		PyObject *rslt = PyTuple_New(3);
+		Move m = chess.getMaxScoreMove(1, 0, 0);
+
+		PyObject *rslt = PyTuple_New(4);
 
 		PyObject *score, *loc1, *loc2;
 		loc1 = PyTuple_New(2);
@@ -594,6 +725,7 @@ static PyObject* getMaxEatMove(PyObject *self, PyObject *args) {
 		PyTuple_SetItem(rslt, 0, loc1);
 		PyTuple_SetItem(rslt, 1, loc2);
 		PyTuple_SetItem(rslt, 2, score);
+		PyTuple_SetItem(rslt, 3, Py_BuildValue("i", chess.score));
 		return rslt;
 
 	}
@@ -603,7 +735,7 @@ static PyObject* getMaxEatMove(PyObject *self, PyObject *args) {
 
 
 static PyMethodDef archessMethods[]= {
-		{"archess_Prime", (PyCFunction) archess_Prime, METH_VARARGS},
+		{"getYv", (PyCFunction) getYv, METH_VARARGS},
 		{"getMaxEatMove", (PyCFunction) getMaxEatMove, METH_VARARGS},
 		{NULL, NULL, 0, NULL}
 };

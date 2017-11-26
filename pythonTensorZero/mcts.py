@@ -11,6 +11,7 @@ import features
 import utils
 from load_data_sets import DataSet, parse_data_sets
 from contextlib import contextmanager
+import archess
 
 @contextmanager
 def timer(message):
@@ -19,10 +20,26 @@ def timer(message):
     tock = time.time()
     print("%s: %.3f" % (message, (tock - tick)))
 
+timerMap = {}
+@contextmanager
+def timer2(message):
+    if message not in timerMap:
+        timerMap[message] = 0
+
+    tick = time.time()
+    yield
+    tock = time.time()
+    timerMap[message] += (tock - tick)
+
+
 CHUNK_HEADER_FORMAT = "iiii?"
 
-c_PUCT = 4
-eee = 0.1
+c_PUCT = math.sqrt(2)
+eee = 0.25
+TreeSearchTimes = 300
+HalfLife = 5000
+kk = HalfLife * math.log(0.5)
+kk2 =math.log(0.5)/HalfLife
 
 
 class MCTSNode():
@@ -35,52 +52,61 @@ class MCTSNode():
     Each of these followup moves is instantiated as a plain MCTSNode.
     '''
     temper = False
+    noiseCount = 10000
+    noiseIndex = 0
+    noiseFn = np.random.dirichlet((3, 970), noiseCount)
+
     @staticmethod
     def root_node(position, move_probabilities):
         node = MCTSNode(None, None, 0)
         node.position = position
+        node.positionf = node.position.clone()
         #artprob = np.ones([cc.Ny, cc.Nx, cc.Ny, cc.Nx], dtype=np.float32) / cc.Ny / cc.Nx / cc.Ny / cc.Nx
         #noiseFn = np.random.dirichlet((3, 97), cc.Ny*cc.Nx*cc.Ny* cc.Nx)[:,0].reshape(cc.Ny, cc.Nx, cc.Ny, cc.Nx)
         #artprob += noiseFn
         node.moved = True
         node.expand(move_probabilities)
+        node.N = 1
         return node
 
     def __init__(self, parent, move, prior):
         self.parent = parent # pointer to another MCTSNode
         self.move = move # the move that led to this node
         self.prior = prior
-        if MCTSNode.temper:
-            noiseFn = np.random.dirichlet((3, 97), 1)
-            self.prior = self.prior * (1 - eee) + eee * noiseFn[0][0]
-        else:
-            self.prior = self.prior
+        # if MCTSNode.temper:
+        #     noiseFn = np.random.dirichlet((3, 97), 1)
+        #     self.prior = self.prior * (1 - eee) + eee * noiseFn[0][0]
+        # else:
+        self.prior = self.prior
 
         self.position = None # lazily computed upon expansion
-        self.children = {} # map of moves to resulting MCTSNode
-        self.Q = -self.parent.Q if self.parent is not None else 0 # average of all outcomes involving this node
-        self.N = 1 # number of times node was visited
-        self.calU()  # monte carlo exploration bonus
 
+        self.children = {} # map of moves to resulting MCTSNode
+
+        self.Q = -self.parent.Q if self.parent is not None else 0 # average of all outcomes involving this node
+        self.N = 0 # number of times node was visited
+        self.N2 = 0
+
+        self.U =0
         self.W = -self.parent.Q if self.parent is not None else 0
         self.done = False
 
         self.moved = False
+        self.side = -self.parent.side if self.parent is not None else 1
+
+
 
         #self.estV = 0
 
     def __repr__(self):
-        return "<MCTSNode(%s) move=%s prior=%s score=%s is_expanded=%s>" % (self.N, self.move, self.prior, self.action_score, self.is_expanded())
+        return "<MCTSNode(%s) U=%s Q=%s prior=%s score=%s is_expanded=%s>" % (self.N, self.U, self.Q, self.prior, self.action_score, self.is_expanded())
 
     @property
     def action_score(self):
         # Note to self: after adding value network, must calculate
         # self.Q = weighted_average(avg(values), avg(rollouts)),
         # as opposed to avg(map(weighted_average, values, rollouts))
-        if not MCTSNode.temper:
-            #noiseFn = np.random.dirichlet((3, 97), 1)
-            return self.Q  + self.U
-
+        self.calU()
         return self.Q + self.U
     def is_expanded(self):
         return self.position is not None
@@ -88,6 +114,7 @@ class MCTSNode():
     def compute_position(self):
         self.position = self.parent.position.clone()
         self.position.move((self.move[0], self.move[1]), (self.move[2], self.move[3]))
+        self.positionf = self.position.clone()
         self.position.flip()
         return self.position
 
@@ -102,20 +129,28 @@ class MCTSNode():
             if self.parent is None or self.parent.parent is None:
                 pass
             else:
-                checkRoot = self.parent.parent #previous move must be different, skip check
-                for layers in range(25): #make sure 25 layers no repeat pattern only
-                    if checkRoot.parent is None or checkRoot.parent.parent is None:
-                        break
-                    checkMove = checkRoot.parent.move
-                    checkRoot = checkRoot.parent.parent
+                invalidmov = []
+                for mov in possMov:
+                    testPos = self.position.clone()
+                    testPos.move((mov[0], mov[1]), (mov[2], mov[3]))
 
-                    if np.array_equal(checkRoot.position.board, self.position.board):
-                        if checkMove in possMov:
-                            possMov.remove(checkMove)
+                    checkRoot = self.parent #previous move must be different, skip check
+                    for layers in range(2): #make sure 25 layers no repeat pattern only
+
+                        if np.array_equal(checkRoot.positionf.board, testPos.board):
+                            invalidmov.append(mov)
+
+                        if checkRoot.parent is None or checkRoot.parent.parent  is None or checkRoot.parent.parent.parent is None:
+                            break
+                        checkRoot = checkRoot.parent.parent
+
+                possMov = [x for x in possMov if x not in invalidmov]
 
         if not possMov:
             print("Unexpected no move left, concced")
             won = 2
+
+
         sumProb = 0.0
         probMap = {}
 
@@ -148,16 +183,26 @@ class MCTSNode():
 
         return won
     def calU(self):
+        noise = 0
+        MCTSNode.noiseIndex += 1
+        if MCTSNode.temper:
+            noise = MCTSNode.noiseFn[MCTSNode.noiseIndex % MCTSNode.noiseCount][0]
+        self.U = c_PUCT * (self.prior+ noise) * math.sqrt(self.parent.N+ self.parent.N2)/ (self.N+1)
 
 
-        self.U = c_PUCT * (self.prior) / (1 + self.N)
 
     def backup_valueImpl(self, node, value):
-        if node.moved: # the root node of current move, no need to prop up to make the calculation wrong using N in probabilities
-            return
-        node.N += 1
+        if node.moved:
+            node.N2 +=1
+        else:
+            node.N += 1
         node.W += value
-        node.Q = node.W / node.N
+        if node.N == 0:
+            pass
+        try:
+            node.Q = node.W / node.N
+        except:
+            pass
 
 
         if node.parent is None:
@@ -167,26 +212,35 @@ class MCTSNode():
         # This incrementally calculates node.Q = average(Q of children),
         # given the newest Q value and the previous average of N-1 values.
 
-        node.calU()
+        #node.calU()
 
     def backup_value(self, value):
         node = self
         while not node is None:
             self.backup_valueImpl(node, value)
+
+            if node.moved:  # the root node of current move, no need to prop up to make the calculation wrong using N in probabilities
+                return
             # must invert, because alternate layers have opposite desires
             value = -value
             node = node.parent
 
-    def select_leaf(self):
+    def select_leaf(self, hintNode):
         current = self
         if current.done >0:
             print ("strange that root already done!, no solution!")
             return current
+        for mov, node in current.children.items():
+            node.calU()
         while current.is_expanded():
-            current = max(current.children.values(), key=lambda node: node.action_score)
-            if current.done> 0:
-                print("select should avoid this done node, unexpected")
-                return current
+            if hintNode is not None:
+                current = hintNode
+                hintNode = None
+            else:
+                current = max(current.children.values(), key=lambda node: node.action_score)
+                if current.done> 0:
+                    print("select should avoid this done node, unexpected")
+                    return current
         return current
 
 
@@ -195,6 +249,12 @@ class MCTSPlayerMixinTrainer:
         self.policy_network = policy_network
         self.seconds_per_move = seconds_per_move
         self.max_rollout_depth = cc.Ny * cc.Nx * 3
+
+        x = np.array([0, 1000, 2500, 5000, 10000])
+        y = np.array([TreeSearchTimes * 2.5//100, TreeSearchTimes * 7.5/100, TreeSearchTimes * 30 //100, TreeSearchTimes * 70//100, TreeSearchTimes *90//100])
+        z = np.polyfit(x, y, 2)
+        p= np.poly1d(z)
+        self.forceStepFn = p
         super().__init__()
 
     def suggest_move(self, position):
@@ -209,6 +269,14 @@ class MCTSPlayerMixinTrainer:
             if position.is_move_reasonable(move):
                 return move
         return None
+    def calN(self, move, curRoot, totalBro):
+        if curRoot.children[move].N == 0:
+            return 0
+        if MCTSNode.temper:
+            powerLevel = 1000
+            return 1 / ((totalBro // (curRoot.children[move].N ** powerLevel)) - 1)
+        else:
+            return 1 / ((totalBro / (curRoot.children[move].N)) - 1)
 
     def trainning(self, gameNo):
         won = 0
@@ -218,8 +286,27 @@ class MCTSPlayerMixinTrainer:
         curRoot = root
         winMove = None
         side = 1
+
+        #testStep = [(0, 0, 1, 0), (0, 0, 1, 0), (1, 0,0, 0), (1, 0,0, 0)]
         for step in range(350):
-            winMove = position.getWinMove()
+            ret = []
+            with timer("eatCaling"):
+                ret = archess.getMaxEatMove(curRoot.position.board.tolist())
+            calMove = None
+            calScore = None
+            calForceSearchTimes = 0
+
+            if len(ret) >= 3:
+                calMove = (ret[0][0], ret[0][1], ret[1][0], ret[1][1])
+                calScore = ret[2]
+                if calScore >= 100000:
+                    winMove =  calMove
+                elif calScore >= 12000:  # should strong consider this
+                    calForceSearchTimes = self.forceStepFn(12000)
+                elif calScore > 0:  # should strong consider this
+                    calForceSearchTimes = self.forceStepFn(calScore)
+
+
             if winMove:
                 position.printBoard()
                 print("Game End, side %d win, move %s" % (step %2, winMove))
@@ -230,11 +317,15 @@ class MCTSPlayerMixinTrainer:
                 MCTSNode.temper = True
 
             loop = 0
-            hintNode = None
+            hintMove = None
             #while time.time() - start < self.seconds_per_move:
             with timer("treeSearching"):
-                for loop in range(300):
-                    hintNode = self.tree_search(curRoot, hintNode)
+                for loop in range(TreeSearchTimes):
+                    if loop < calForceSearchTimes:
+                        hintMove = calMove
+                    else:
+                        hintMove = None
+                    hintNode = self.tree_search(curRoot, hintMove)
                     #loop += 1
 
             print ("MCTS run %d" % (loop))
@@ -243,9 +334,29 @@ class MCTSPlayerMixinTrainer:
                 print("error , no move somehow, conceed")
                 won = 2
                 break
-            sorted_moves = sorted(curRoot.children.keys(), key=lambda move, curRoot=curRoot: curRoot.children[move].N, reverse=True)
 
-            nextMove = sorted_moves[0]
+            totalBro = 0
+            powerLevel = 1
+
+            # if step < len(testStep):
+            #     nextMove = testStep[step]
+            # else:
+            if MCTSNode.temper:
+                powerLevel = 1000
+            for broMove, broNode in curRoot.children.items():
+                totalBro += broNode.N **  powerLevel
+            movPro = random.uniform(0, 1)
+            curPro = 0
+            nextMove = None
+            for broMove, broNode in curRoot.children.items():
+                curPro += (curRoot.children[broMove].N ** powerLevel) / totalBro
+                if curPro >= movPro:
+                    nextMove = broMove
+                    break
+
+            if nextMove is None:
+                nextMove = broMove
+
             position.move((nextMove[0], nextMove[1]), (nextMove[2], nextMove[3]) )
 
             if side ==1:
@@ -351,7 +462,7 @@ class MCTSPlayerMixinTrainer:
 
         self.policy_network.save_variables()
 
-    def tree_search(self, root, hintNode):
+    def tree_search(self, root, hintMove):
 
         # useHint = False
         # node = hintNode
@@ -371,8 +482,11 @@ class MCTSPlayerMixinTrainer:
         #         searchNode = searchNode.parent
         #     chosen_leaf = searchNode.select_leaf()
         # else:
-
-        chosen_leaf = root.select_leaf()
+        if hintMove is not None:
+            hintNode = root.children[hintMove]
+        else:
+            hintNode = None
+        chosen_leaf = root.select_leaf(hintNode)
         # expansion
         if chosen_leaf.done ==1 :
             chosen_leaf.backup_value(1)
@@ -380,7 +494,6 @@ class MCTSPlayerMixinTrainer:
         elif chosen_leaf.done ==2 :
             chosen_leaf.backup_value(0)
             return None
-
         position = chosen_leaf.compute_position()
         if position is None:
             print("illegal move!", file=sys.stderr)
@@ -397,6 +510,11 @@ class MCTSPlayerMixinTrainer:
         elif won == 2:
             yv = 0
         else:
+            discout = math.exp(kk / (self.policy_network.get_global_step()+1))
+            ret = archess.getMaxEatMove(position.board.tolist())
+            roughScore = math.tanh(-(ret[2] + ret[3]) / 20000)
+            discout2 = math.exp(kk2* (self.policy_network.get_global_step()+1))
+            yv = yv * discout + discout2 *  roughScore
             pass
         # evaluation
         # value = self.estimate_value(root, chosen_leaf)
@@ -405,11 +523,13 @@ class MCTSPlayerMixinTrainer:
         # if MCTSNode.temper:
         #     noiseFn = (random.randint(0, 10000) -5000)/ 10000
         #     yv = yv * (1- eee) + (eee * noiseFn[0][0]
-        if not math.isnan(yv):
-            chosen_leaf.backup_value(yv)
-        else:
-            print("unexpected yv nana")
-            chosen_leaf.backup_value(0)
+        with timer2("backup"):
+
+            if not math.isnan(yv):
+                chosen_leaf.backup_value(yv)
+            else:
+                print("unexpected yv nana")
+                chosen_leaf.backup_value(0)
 
         return chosen_leaf
 

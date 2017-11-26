@@ -36,7 +36,7 @@ EPSILON = 1e-35
 
 class PolicyNetwork(object):
     temper = False
-    def __init__(self, k=256, num_int_conv_layers=11, use_cpu=False):
+    def __init__(self, k=128, num_int_conv_layers=11, use_cpu=False):
         self.num_input_planes = sum(f.planes for f in features.DEFAULT_FEATURES)
         self.k = k
         self.num_int_conv_layers = num_int_conv_layers
@@ -74,7 +74,7 @@ class PolicyNetwork(object):
             # return tf.Variable(initial, name=name)
 
             number_inputs_added = utils.product(shape[:-1])
-            stddev = 1 / math.sqrt(number_inputs_added)
+            stddev = 1 / math.sqrt(number_inputs_added) / 50
             # http://neuralnetworksanddeeplearning.com/chap3.html#weight_initialization
             w = tf.Variable(tf.truncated_normal(shape, stddev=stddev), name=name)
             self.weightList.append(w)
